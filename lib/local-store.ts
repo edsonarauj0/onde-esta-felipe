@@ -75,3 +75,8 @@ export function salvarConviteAceito(codigo: string): void {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(KEYS.conviteAceito, codigo);
 }
+
+export function limparConviteAceito(): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(KEYS.conviteAceito);
+}

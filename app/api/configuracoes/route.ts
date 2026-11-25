@@ -8,6 +8,7 @@ import {
 } from '@/lib/firebase-admin';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const ConfigSchema = z.object({
   nomePiloto: z.string().trim().min(1).max(60).optional(),
@@ -28,15 +29,18 @@ const ConfigSchema = z.object({
 
 export async function GET() {
   const config = await getConfiguracoesServer();
-  return NextResponse.json({
-    config,
-    firebaseConfigurado: isFirebaseAdminConfigured(),
-    openskyConfigurado: Boolean(
-      (process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET) ||
-        (process.env.OPENSKY_USERNAME && process.env.OPENSKY_PASSWORD)
-    ),
-    claudeConfigurado: Boolean(process.env.ANTHROPIC_API_KEY),
-  });
+  return NextResponse.json(
+    {
+      config,
+      firebaseConfigurado: isFirebaseAdminConfigured(),
+      openskyConfigurado: Boolean(
+        (process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET) ||
+          (process.env.OPENSKY_USERNAME && process.env.OPENSKY_PASSWORD)
+      ),
+      claudeConfigurado: Boolean(process.env.ANTHROPIC_API_KEY),
+    },
+    { headers: { 'Cache-Control': 'no-store' } }
+  );
 }
 
 export async function PUT(request: Request) {

@@ -33,6 +33,7 @@ import {
   lerConfigDemo,
   lerConviteAceito,
   lerEventosDemo,
+  limparConviteAceito,
   salvarConviteAceito,
 } from '@/lib/local-store';
 import {
@@ -70,11 +71,13 @@ export function PublicTracker() {
 
   const [eventos, setEventos] = useState<EventoEscala[]>([]);
   const [config, setConfig] = useState<ConfiguracoesApp>(CONFIG_PADRAO);
+  const [configCarregada, setConfigCarregada] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [agora, setAgora] = useState<Date>(() => new Date());
   const [posicaoAoVivo, setPosicaoAoVivo] = useState<PosicaoAoVivo | null>(null);
   const [darkMode, setDarkMode] = useState(false);
   const [conviteAutorizado, setConviteAutorizado] = useState(false);
+  const [validandoConvite, setValidandoConvite] = useState(true);
   const [cenarioDemo, setCenarioDemo] = useState<CenarioDemo>('padrao');
 
   // Tema escuro
@@ -96,45 +99,78 @@ export function PublicTracker() {
     });
   };
 
-  // Verifica convite via query string (?convite=CODIGO) ou localStorage
+  // Verifica e REVALIDA convite via query string (?convite=CODIGO) ou localStorage no servidor
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const codeParam = params.get('convite')?.trim().toUpperCase();
-    const saved = lerConviteAceito();
+    const saved = lerConviteAceito()?.trim().toUpperCase() || null;
+    const codigoParaValidar = codeParam || saved;
 
+    if (!codigoParaValidar) {
+      setConviteAutorizado(false);
+      setValidandoConvite(false);
+      return;
+    }
+
+    let cancelado = false;
     const validar = async (codigo: string) => {
       try {
         const res = await fetch(
-          `/api/convites?code=${encodeURIComponent(codigo)}`
+          `/api/convites?code=${encodeURIComponent(codigo)}`,
+          { cache: 'no-store' }
         );
         const data = (await res.json()) as { valido?: boolean };
+        if (cancelado) return;
         if (data.valido) {
           salvarConviteAceito(codigo);
           setConviteAutorizado(true);
+        } else {
+          limparConviteAceito();
+          setConviteAutorizado(false);
         }
       } catch {
-        // Ignora erro silenciosamente
+        if (!cancelado) setConviteAutorizado(false);
+      } finally {
+        if (!cancelado) setValidandoConvite(false);
       }
     };
 
-    if (codeParam) {
-      validar(codeParam);
-    } else if (saved) {
-      setConviteAutorizado(true);
-    }
+    void validar(codigoParaValidar);
+    return () => {
+      cancelado = true;
+    };
   }, []);
 
-  // Leitura em tempo real (Firestore onSnapshot) ou modo demo local
+  // Leitura em tempo real das configurações (API + Firestore onSnapshot) ou modo demo local
   useEffect(() => {
     if (!firebaseAtivo) {
       setConfig(lerConfigDemo());
       setEventos(lerEventosDemo());
+      setConfigCarregada(true);
       setCarregando(false);
       return;
     }
 
+    let cancelado = false;
+
+    // 1. Busca inicial via servidor (/api/configuracoes) — garante leitura mesmo se o snapshot demorar
+    fetch('/api/configuracoes', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { config?: Partial<ConfiguracoesApp> } | null) => {
+        if (cancelado) return;
+        if (data?.config) {
+          setConfig({ ...CONFIG_PADRAO, ...data.config });
+        }
+        setConfigCarregada(true);
+      })
+      .catch(() => {
+        if (!cancelado) setConfigCarregada(true);
+      });
+
+    // 2. Assinatura em tempo real no Firestore
     const db = getFirebaseDb();
     if (!db) {
+      setConfigCarregada(true);
       setCarregando(false);
       return;
     }
@@ -148,17 +184,23 @@ export function PublicTracker() {
             ...(snap.data() as Partial<ConfiguracoesApp>),
           });
         }
+        setConfigCarregada(true);
       },
       () => {
+        setConfigCarregada(true);
         setCarregando(false);
       }
     );
 
-    return () => unsubConfig();
+    return () => {
+      cancelado = true;
+      unsubConfig();
+    };
   }, [firebaseAtivo]);
 
   useEffect(() => {
-    if (!firebaseAtivo) return;
+    if (!firebaseAtivo || !configCarregada) return;
+    if (config.exigirConvite && !conviteAutorizado) return;
     const db = getFirebaseDb();
     if (!db) return;
 
@@ -183,7 +225,7 @@ export function PublicTracker() {
     );
 
     return () => unsubEventos();
-  }, [firebaseAtivo, config.mesAtivo]);
+  }, [firebaseAtivo, configCarregada, config.mesAtivo, config.exigirConvite, conviteAutorizado]);
 
   // Atualiza posição estimada no arco a cada 30 segundos
   useEffect(() => {
@@ -288,6 +330,15 @@ export function PublicTracker() {
     const timer = setInterval(consultarPosicaoAoVivo, 60_000);
     return () => clearInterval(timer);
   }, [consultarPosicaoAoVivo]);
+
+  // Aguarda carregar configurações e validar convite antes de mostrar qualquer dado
+  if (!configCarregada || validandoConvite) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
+        Verificando acesso...
+      </div>
+    );
+  }
 
   // Portão de convite quando ativado nas configurações
   if (config.exigirConvite && !conviteAutorizado) {

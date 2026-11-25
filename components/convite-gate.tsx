@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { KeyRound, Plane, ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
+import { KeyRound, Plane, Settings, ShieldCheck } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +78,13 @@ export function ConviteGate({ nomePiloto, onValidado }: ConviteGateProps) {
               {validando ? 'Validando convite...' : 'Entrar'}
             </Button>
           </form>
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-center">
+            <Button variant="ghost" size="sm" asChild className="text-xs text-slate-500">
+              <Link href="/admin">
+                <Settings className="w-3.5 h-3.5" /> Sou o administrador
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
