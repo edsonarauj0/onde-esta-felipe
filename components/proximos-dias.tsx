@@ -1,8 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Calendar,
+  ChevronLeft,
+  ChevronRight,
   Coffee,
   GraduationCap,
   Moon,
@@ -11,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { getAeroporto } from '@/lib/airports';
 import {
   formatarDataLocal,
@@ -21,8 +24,12 @@ import type { EventoEscala } from '@/lib/types';
 
 interface ProximosDiasProps {
   eventos: EventoEscala[];
+  agora?: Date;
   baseIata?: string;
 }
+
+const ITENS_POR_PAGINA = 5;
+const FUSO_PADRAO = 'America/Sao_Paulo';
 
 const TIPO_LABEL: Record<EventoEscala['tipo'], string> = {
   voo: 'Voo',
@@ -47,36 +54,91 @@ function IconeTipo({ tipo }: { tipo: EventoEscala['tipo'] }) {
   }
 }
 
-export function ProximosDias({ eventos, baseIata = 'GRU' }: ProximosDiasProps) {
+export function ProximosDias({
+  eventos,
+  agora = new Date(),
+  baseIata = 'GRU',
+}: ProximosDiasProps) {
   const base = getAeroporto(baseIata);
+  const agoraMs = agora.getTime();
+
+  // Todos os eventos ativos hoje e futuros cadastrados, ordenados cronologicamente
+  const eventosFuturos = useMemo(() => {
+    return eventos
+      .filter((ev) => {
+        if (ev.cancelado) return false;
+        const { fim } = getIntervaloEfetivo(ev);
+        return fim.getTime() >= agoraMs;
+      })
+      .sort(
+        (a, b) =>
+          getIntervaloEfetivo(a).inicio.getTime() -
+          getIntervaloEfetivo(b).inicio.getTime()
+      );
+  }, [eventos, agoraMs]);
+
+  const totalPaginas = Math.max(
+    1,
+    Math.ceil(eventosFuturos.length / ITENS_POR_PAGINA)
+  );
+  const [pagina, setPagina] = useState(0);
+
+  // Volta para a primeira página se o conjunto de eventos diminuir ou mudar de cenário
+  useEffect(() => {
+    setPagina((p) => Math.min(p, Math.max(0, totalPaginas - 1)));
+  }, [totalPaginas]);
+
+  const paginaSegura = Math.min(pagina, totalPaginas - 1);
+  const inicioIdx = paginaSegura * ITENS_POR_PAGINA;
+  const itensPagina = eventosFuturos.slice(
+    inicioIdx,
+    inicioIdx + ITENS_POR_PAGINA
+  );
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-sky-500" />
-          Próximas destinos
-        </CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-sky-500" />
+            Próximos destinos
+          </CardTitle>
+          {eventosFuturos.length > 0 && (
+            <Badge variant="secondary" className="font-mono text-[11px]">
+              {inicioIdx + 1}–{inicioIdx + itensPagina.length} de{' '}
+              {eventosFuturos.length}
+            </Badge>
+          )}
+        </div>
       </CardHeader>
-      <CardContent>
-        {eventos.length === 0 ? (
+
+      <CardContent className="space-y-3">
+        {itensPagina.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Nada na agenda! Será que finalmente vai aparecer no almoço de
             domingo? 🍝
           </p>
         ) : (
           <ul className="space-y-2.5">
-            {eventos.map((ev) => {
+            {itensPagina.map((ev) => {
               const origem = getAeroporto(ev.origem);
               const destino = getAeroporto(ev.destino);
-              const tzInicio = origem?.tz ?? destino?.tz ?? base?.tz ?? 'America/Sao_Paulo';
-              const tzFim = destino?.tz ?? origem?.tz ?? base?.tz ?? 'America/Sao_Paulo';
+              const tzInicio =
+                origem?.tz ?? destino?.tz ?? base?.tz ?? FUSO_PADRAO;
+              const tzFim =
+                destino?.tz ?? origem?.tz ?? base?.tz ?? FUSO_PADRAO;
               const { inicio, fim } = getIntervaloEfetivo(ev);
+              const emAndamento =
+                agoraMs >= inicio.getTime() && agoraMs <= fim.getTime();
 
               return (
                 <li
                   key={ev.id}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 p-3"
+                  className={`flex items-start justify-between gap-3 rounded-xl border p-3 transition-colors ${
+                    emAndamento
+                      ? 'border-sky-300 dark:border-sky-700 bg-sky-50/70 dark:bg-sky-950/40'
+                      : 'border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40'
+                  }`}
                 >
                   <div className="flex items-start gap-2.5 min-w-0">
                     <div className="mt-0.5 p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700 shrink-0">
@@ -88,6 +150,10 @@ export function ProximosDias({ eventos, baseIata = 'GRU' }: ProximosDiasProps) {
                           {ev.tipo === 'voo'
                             ? `${ev.origem ?? '---'} → ${ev.destino ?? '---'}`
                             : `${TIPO_LABEL[ev.tipo]}${
+                                ev.codigoAtividade
+                                  ? ` (${ev.codigoAtividade})`
+                                  : ''
+                              }${
                                 destino || origem
                                   ? ` · ${(destino ?? origem)!.cidade}`
                                   : ''
@@ -99,6 +165,14 @@ export function ProximosDias({ eventos, baseIata = 'GRU' }: ProximosDiasProps) {
                             className="text-[10px] px-1.5 py-0 font-mono"
                           >
                             {ev.numeroVoo}
+                          </Badge>
+                        )}
+                        {emAndamento && (
+                          <Badge
+                            variant="live"
+                            className="text-[10px] px-1.5 py-0"
+                          >
+                            Agora
                           </Badge>
                         )}
                       </div>
@@ -121,6 +195,56 @@ export function ProximosDias({ eventos, baseIata = 'GRU' }: ProximosDiasProps) {
               );
             })}
           </ul>
+        )}
+
+        {/* Setas de paginação (máximo 5 itens por página) */}
+        {totalPaginas > 1 && (
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2.5 text-xs"
+              disabled={paginaSegura <= 0}
+              onClick={() => setPagina((p) => Math.max(0, p - 1))}
+              aria-label="Página anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Anterior</span>
+            </Button>
+
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <span className="font-mono font-medium text-slate-700 dark:text-slate-200">
+                {paginaSegura + 1} / {totalPaginas}
+              </span>
+              {paginaSegura > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[11px] text-sky-600 dark:text-sky-400"
+                  onClick={() => setPagina(0)}
+                >
+                  Início
+                </Button>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2.5 text-xs"
+              disabled={paginaSegura >= totalPaginas - 1}
+              onClick={() =>
+                setPagina((p) => Math.min(totalPaginas - 1, p + 1))
+              }
+              aria-label="Próxima página"
+            >
+              <span className="hidden sm:inline">Próximo</span>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

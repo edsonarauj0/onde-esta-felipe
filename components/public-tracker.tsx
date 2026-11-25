@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { onAuthStateChanged } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -30,6 +31,7 @@ import { ResumoMesCard } from '@/components/resumo-mes';
 import { ConviteGate } from '@/components/convite-gate';
 import { ConfettiCasa } from '@/components/confetti-casa';
 import {
+  getFirebaseAuth,
   getFirebaseDb,
   isFirebaseClientConfigured,
 } from '@/lib/firebase';
@@ -107,9 +109,38 @@ export function PublicTracker() {
   const [darkMode, setDarkMode] = useState(false);
   const [conviteAutorizado, setConviteAutorizado] = useState(false);
   const [validandoConvite, setValidandoConvite] = useState(true);
+  const [isAdminLogado, setIsAdminLogado] = useState(false);
+  const [authVerificado, setAuthVerificado] = useState(!firebaseAtivo);
   const [modoSimulador, setModoSimulador] = useState(false);
   const [cenarioDemo, setCenarioDemo] = useState<CenarioDemo>('tempo-real');
   const [dataSimInput, setDataSimInput] = useState('07/11/2026 14:00');
+
+  // Verifica se já há um administrador logado no Firebase Auth (dispensa tela de convite)
+  useEffect(() => {
+    if (!firebaseAtivo) {
+      setAuthVerificado(true);
+      return;
+    }
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setAuthVerificado(true);
+      return;
+    }
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        try {
+          const token = await u.getIdTokenResult();
+          setIsAdminLogado(token.claims.admin === true);
+        } catch {
+          setIsAdminLogado(false);
+        }
+      } else {
+        setIsAdminLogado(false);
+      }
+      setAuthVerificado(true);
+    });
+    return () => unsub();
+  }, [firebaseAtivo]);
 
   // Tema escuro + detecção de ?simular=1 na URL
   useEffect(() => {
@@ -234,9 +265,12 @@ export function PublicTracker() {
     };
   }, [firebaseAtivo]);
 
+  const acessoLiberado =
+    !config.exigirConvite || conviteAutorizado || isAdminLogado;
+
   useEffect(() => {
-    if (!firebaseAtivo || !configCarregada) return;
-    if (config.exigirConvite && !conviteAutorizado) return;
+    if (!firebaseAtivo || !configCarregada || !authVerificado) return;
+    if (!acessoLiberado) return;
     const db = getFirebaseDb();
     if (!db) return;
 
@@ -261,7 +295,7 @@ export function PublicTracker() {
     );
 
     return () => unsubEventos();
-  }, [firebaseAtivo, configCarregada, config.mesAtivo, config.exigirConvite, conviteAutorizado]);
+  }, [firebaseAtivo, configCarregada, authVerificado, acessoLiberado, config.mesAtivo]);
 
   // Atualiza posição estimada no arco a cada 30 segundos
   useEffect(() => {
@@ -422,8 +456,8 @@ export function PublicTracker() {
     return () => clearInterval(timer);
   }, [consultarPosicaoAoVivo]);
 
-  // Aguarda carregar configurações e validar convite antes de mostrar qualquer dado
-  if (!configCarregada || validandoConvite) {
+  // Aguarda carregar configurações, verificar sessão admin e validar convite antes de mostrar qualquer dado
+  if (!configCarregada || validandoConvite || !authVerificado) {
     return (
       <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
         Verificando acesso...
@@ -431,8 +465,8 @@ export function PublicTracker() {
     );
   }
 
-  // Portão de convite quando ativado nas configurações
-  if (config.exigirConvite && !conviteAutorizado) {
+  // Portão de convite quando ativado nas configurações (admin logado passa direto)
+  if (!acessoLiberado) {
     return (
       <ConviteGate
         nomePiloto={config.nomePiloto}
@@ -630,7 +664,8 @@ export function PublicTracker() {
                 config={config}
               />
               <ProximosDias
-                eventos={status.proximosEventos}
+                eventos={eventosAtivos}
+                agora={agoraSimulado}
                 baseIata={config.baseIata}
               />
               <div className="lg:hidden">
