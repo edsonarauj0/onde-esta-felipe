@@ -1,0 +1,289 @@
+import {
+  cert,
+  getApps,
+  initializeApp,
+  type App,
+} from 'firebase-admin/app';
+import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
+import type { ConfiguracoesApp, EventoEscala } from './types';
+import { CONFIG_PADRAO } from './status';
+
+export function isFirebaseAdminConfigured(): boolean {
+  return Boolean(
+    process.env.FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_CLIENT_EMAIL &&
+      process.env.FIREBASE_PRIVATE_KEY
+  );
+}
+
+let adminApp: App | null = null;
+
+export function getAdminApp(): App | null {
+  if (!isFirebaseAdminConfigured()) return null;
+  if (adminApp) return adminApp;
+
+  if (getApps().length > 0) {
+    adminApp = getApps()[0]!;
+    return adminApp;
+  }
+
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, '\n');
+
+  adminApp = initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+      privateKey,
+    }),
+    storageBucket:
+      process.env.FIREBASE_STORAGE_BUCKET ||
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  });
+
+  return adminApp;
+}
+
+export function getAdminDb(): Firestore | null {
+  const app = getAdminApp();
+  if (!app) return null;
+  const databaseId =
+    process.env.FIREBASE_DATABASE_ID?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID?.trim();
+  return databaseId ? getFirestore(app, databaseId) : getFirestore(app);
+}
+
+export function isFirestoreNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = (err as { code?: unknown }).code;
+  const msg = String((err as { message?: unknown }).message ?? '');
+  return code === 5 || msg.includes('5 NOT_FOUND');
+}
+
+export type AdminAuthResult =
+  | { ok: true; demo: boolean; token?: DecodedIdToken }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Valida o token Bearer do Firebase Auth e exige a custom claim `admin: true`.
+ * Em modo demonstração local (sem Firebase Admin configurado), permite testes locais.
+ */
+export async function verifyAdminRequest(
+  request: Request
+): Promise<AdminAuthResult> {
+  if (!isFirebaseAdminConfigured()) {
+    return { ok: true, demo: true };
+  }
+
+  const authHeader = request.headers.get('authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return { ok: false, status: 401, error: 'Token de autenticação ausente.' };
+  }
+
+  const idToken = authHeader.slice('Bearer '.length).trim();
+  if (!idToken) {
+    return { ok: false, status: 401, error: 'Token inválido.' };
+  }
+
+  try {
+    const app = getAdminApp()!;
+    const decoded = await getAuth(app).verifyIdToken(idToken);
+    if (decoded.admin !== true) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Acesso negado: conta sem permissão de administrador (claim admin: true).',
+      };
+    }
+    return { ok: true, demo: false, token: decoded };
+  } catch {
+    return {
+      ok: false,
+      status: 401,
+      error: 'Sessão expirada ou token inválido.',
+    };
+  }
+}
+
+export async function getConfiguracoesServer(): Promise<ConfiguracoesApp> {
+  const db = getAdminDb();
+  if (!db) return CONFIG_PADRAO;
+
+  try {
+    const snap = await db.doc('configuracoes/app').get();
+    if (!snap.exists) return CONFIG_PADRAO;
+    return { ...CONFIG_PADRAO, ...(snap.data() as Partial<ConfiguracoesApp>) };
+  } catch {
+    return CONFIG_PADRAO;
+  }
+}
+
+export async function getEventoServer(
+  eventoId: string,
+  mes?: string | null
+): Promise<{ evento: EventoEscala; mes: string } | null> {
+  const db = getAdminDb();
+  if (!db) return null;
+
+  const targetMonth = mes || (await getConfiguracoesServer()).mesAtivo;
+  const direct = await db
+    .doc(`escalas/${targetMonth}/eventos/${eventoId}`)
+    .get();
+
+  if (direct.exists) {
+    return {
+      evento: { id: direct.id, ...(direct.data() as Omit<EventoEscala, 'id'>) },
+      mes: targetMonth,
+    };
+  }
+
+  // Fallback: busca nos meses disponíveis caso o evento pertença a outro mês
+  const escalasSnap = await db.collection('escalas').listDocuments();
+  for (const escalaDoc of escalasSnap) {
+    if (escalaDoc.id === targetMonth) continue;
+    const candidate = await escalaDoc.collection('eventos').doc(eventoId).get();
+    if (candidate.exists) {
+      return {
+        evento: {
+          id: candidate.id,
+          ...(candidate.data() as Omit<EventoEscala, 'id'>),
+        },
+        mes: escalaDoc.id,
+      };
+    }
+  }
+
+  return null;
+}
+
+export async function atualizarIcao24NoFirestore(
+  mes: string,
+  eventoId: string,
+  icao24: string,
+  callsign?: string
+): Promise<void> {
+  const db = getAdminDb();
+  if (!db) return;
+  await db
+    .doc(`escalas/${mes}/eventos/${eventoId}`)
+    .set(
+      {
+        icao24: icao24.toLowerCase(),
+        ...(callsign ? { callsign } : {}),
+      },
+      { merge: true }
+    );
+}
+
+export async function publicarEscalaNoFirestore(params: {
+  mes: string;
+  modo: 'substituir' | 'complementar';
+  ativarMes: boolean;
+  eventos: EventoEscala[];
+  tripulante?: string | null;
+  formato?: string;
+}): Promise<{ demo: boolean; totalPublicado: number }> {
+  const { mes, modo, ativarMes, eventos, tripulante, formato } = params;
+
+  if (!isFirebaseAdminConfigured()) {
+    return { demo: true, totalPublicado: eventos.length };
+  }
+
+  const db = getAdminDb()!;
+  const colRef = db.collection(`escalas/${mes}/eventos`);
+
+  if (modo === 'substituir') {
+    const existentes = await colRef.listDocuments();
+    const chunkSize = 400;
+    for (let i = 0; i < existentes.length; i += chunkSize) {
+      const batch = db.batch();
+      for (const docRef of existentes.slice(i, i + chunkSize)) {
+        batch.delete(docRef);
+      }
+      await batch.commit();
+    }
+  }
+
+  const chunkSize = 400;
+  for (let i = 0; i < eventos.length; i += chunkSize) {
+    const chunk = eventos.slice(i, i + chunkSize);
+    const batch = db.batch();
+    for (const ev of chunk) {
+      const docRef = colRef.doc(ev.id);
+      const cleanData = Object.fromEntries(
+        Object.entries(ev).filter(([, v]) => v !== undefined)
+      );
+      batch.set(docRef, cleanData, { merge: modo === 'complementar' });
+    }
+    await batch.commit();
+  }
+
+  await db.doc(`escalas/${mes}`).set(
+    {
+      mes,
+      totalEventos: eventos.length,
+      ...(tripulante ? { tripulante } : {}),
+      ...(formato ? { formato } : {}),
+      atualizadoEm: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+
+  if (ativarMes) {
+    await db.doc('configuracoes/app').set(
+      {
+        mesAtivo: mes,
+        atualizadoEm: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+
+  return { demo: false, totalPublicado: eventos.length };
+}
+
+/**
+ * Arquiva o PDF original no Firebase Storage pelo servidor (Admin SDK),
+ * evitando bloqueio de CORS no navegador (localhost:3000 ou Vercel).
+ */
+export async function salvarPdfNoStorageServer(params: {
+  mes: string;
+  buffer: Buffer;
+  nomeOriginal?: string;
+}): Promise<{ salvo: boolean; caminho?: string; erro?: string }> {
+  const app = getAdminApp();
+  const bucketName =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+
+  if (!app || !bucketName) {
+    return { salvo: false, erro: 'Storage bucket não configurado.' };
+  }
+
+  try {
+    const bucket = getStorage(app).bucket(bucketName);
+    const safeName = (params.nomeOriginal || 'escala.pdf').replace(
+      /[^a-zA-Z0-9._-]/g,
+      '_'
+    );
+    const caminho = `escalas/${params.mes}/${Date.now()}-${safeName}`;
+    const fileRef = bucket.file(caminho);
+
+    await fileRef.save(params.buffer, {
+      contentType: 'application/pdf',
+      resumable: false,
+      metadata: {
+        metadata: {
+          mes: params.mes,
+          origem: 'onde-esta-felipe-admin',
+        },
+      },
+    });
+
+    return { salvo: true, caminho };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { salvo: false, erro: msg };
+  }
+}

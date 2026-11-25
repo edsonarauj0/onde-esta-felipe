@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Escalas publicadas: leitura para o app (ou troque para request.auth != null se usar login de convidados)
+    // Escrita estritamente restrita ao administrador com claim admin: true
+    match /escalas/{mes} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /eventos/{eventoId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    // Configurações públicas do app (privacidade, mês ativo, base)
+    match /configuracoes/app {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Convites: nunca listáveis diretamente no cliente; validação ocorre via API /api/convites?code=...
+    match /convites/{conviteId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

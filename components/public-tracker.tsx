@@ -1,0 +1,455 @@
+'use client';
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import {
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+} from 'firebase/firestore';
+import {
+  Moon,
+  Plane,
+  RefreshCw,
+  Settings,
+  Sparkles,
+  Sun,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { StatusCard } from '@/components/status-card';
+import { ProximosDias } from '@/components/proximos-dias';
+import { ResumoMesCard } from '@/components/resumo-mes';
+import { ConviteGate } from '@/components/convite-gate';
+import {
+  getFirebaseDb,
+  isFirebaseClientConfigured,
+} from '@/lib/firebase';
+import {
+  lerConfigDemo,
+  lerConviteAceito,
+  lerEventosDemo,
+  salvarConviteAceito,
+} from '@/lib/local-store';
+import {
+  CONFIG_PADRAO,
+  calcularResumoMes,
+  estaNaJanelaOpenSky,
+  getStatus,
+} from '@/lib/status';
+import type {
+  ConfiguracoesApp,
+  EventoEscala,
+  PosicaoAoVivo,
+} from '@/lib/types';
+
+// Carrega MapLibre exclusivamente no cliente (ssr: false)
+const Mapa = dynamic(() => import('@/components/mapa/Mapa'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[340px] sm:h-[440px] md:h-[580px] rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-sm text-slate-500">
+      Carregando mapa interativo...
+    </div>
+  ),
+});
+
+type CenarioDemo =
+  | 'padrao'
+  | 'ao-vivo-sim'
+  | 'pernoite'
+  | 'folga'
+  | 'treinamento'
+  | 'vazio';
+
+export function PublicTracker() {
+  const firebaseAtivo = isFirebaseClientConfigured();
+
+  const [eventos, setEventos] = useState<EventoEscala[]>([]);
+  const [config, setConfig] = useState<ConfiguracoesApp>(CONFIG_PADRAO);
+  const [carregando, setCarregando] = useState(true);
+  const [agora, setAgora] = useState<Date>(() => new Date());
+  const [posicaoAoVivo, setPosicaoAoVivo] = useState<PosicaoAoVivo | null>(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [conviteAutorizado, setConviteAutorizado] = useState(false);
+  const [cenarioDemo, setCenarioDemo] = useState<CenarioDemo>('padrao');
+
+  // Tema escuro
+  useEffect(() => {
+    const saved = window.localStorage.getItem('oef_theme');
+    const prefersDark =
+      saved === 'dark' ||
+      (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    setDarkMode(prefersDark);
+    document.documentElement.classList.toggle('dark', prefersDark);
+  }, []);
+
+  const alternarTema = () => {
+    setDarkMode((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle('dark', next);
+      window.localStorage.setItem('oef_theme', next ? 'dark' : 'light');
+      return next;
+    });
+  };
+
+  // Verifica convite via query string (?convite=CODIGO) ou localStorage
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const codeParam = params.get('convite')?.trim().toUpperCase();
+    const saved = lerConviteAceito();
+
+    const validar = async (codigo: string) => {
+      try {
+        const res = await fetch(
+          `/api/convites?code=${encodeURIComponent(codigo)}`
+        );
+        const data = (await res.json()) as { valido?: boolean };
+        if (data.valido) {
+          salvarConviteAceito(codigo);
+          setConviteAutorizado(true);
+        }
+      } catch {
+        // Ignora erro silenciosamente
+      }
+    };
+
+    if (codeParam) {
+      validar(codeParam);
+    } else if (saved) {
+      setConviteAutorizado(true);
+    }
+  }, []);
+
+  // Leitura em tempo real (Firestore onSnapshot) ou modo demo local
+  useEffect(() => {
+    if (!firebaseAtivo) {
+      setConfig(lerConfigDemo());
+      setEventos(lerEventosDemo());
+      setCarregando(false);
+      return;
+    }
+
+    const db = getFirebaseDb();
+    if (!db) {
+      setCarregando(false);
+      return;
+    }
+
+    const unsubConfig = onSnapshot(
+      doc(db, 'configuracoes', 'app'),
+      (snap) => {
+        if (snap.exists()) {
+          setConfig({
+            ...CONFIG_PADRAO,
+            ...(snap.data() as Partial<ConfiguracoesApp>),
+          });
+        }
+      },
+      () => {
+        setCarregando(false);
+      }
+    );
+
+    return () => unsubConfig();
+  }, [firebaseAtivo]);
+
+  useEffect(() => {
+    if (!firebaseAtivo) return;
+    const db = getFirebaseDb();
+    if (!db) return;
+
+    const q = query(
+      collection(db, 'escalas', config.mesAtivo, 'eventos'),
+      orderBy('inicioUtc', 'asc')
+    );
+
+    const unsubEventos = onSnapshot(
+      q,
+      (snap) => {
+        const lista: EventoEscala[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<EventoEscala, 'id'>),
+        }));
+        setEventos(lista);
+        setCarregando(false);
+      },
+      () => {
+        setCarregando(false);
+      }
+    );
+
+    return () => unsubEventos();
+  }, [firebaseAtivo, config.mesAtivo]);
+
+  // Atualiza posição estimada no arco a cada 30 segundos
+  useEffect(() => {
+    const id = setInterval(() => {
+      setAgora(new Date());
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Aplica deslocamento de cenário no modo demo para explorar todas as poses da caricatura
+  const { eventosAtivos, agoraSimulado } = useMemo(() => {
+    if (firebaseAtivo || cenarioDemo === 'padrao' || cenarioDemo === 'ao-vivo-sim') {
+      return { eventosAtivos: eventos, agoraSimulado: agora };
+    }
+    if (cenarioDemo === 'vazio') {
+      return { eventosAtivos: [], agoraSimulado: agora };
+    }
+    const offsetHoras: Record<Exclude<CenarioDemo, 'padrao' | 'ao-vivo-sim' | 'vazio'>, number> = {
+      pernoite: 12,
+      folga: 50,
+      treinamento: 146,
+    };
+    return {
+      eventosAtivos: eventos,
+      agoraSimulado: new Date(
+        agora.getTime() + offsetHoras[cenarioDemo] * 3_600_000
+      ),
+    };
+  }, [firebaseAtivo, cenarioDemo, eventos, agora]);
+
+  const status = useMemo(
+    () => getStatus(eventosAtivos, agoraSimulado, config),
+    [eventosAtivos, agoraSimulado, config]
+  );
+
+  const resumoMes = useMemo(
+    () => calcularResumoMes(eventosAtivos),
+    [eventosAtivos]
+  );
+
+  // Consulta /api/posicao/[id] a cada 60 segundos apenas quando há voo dentro da janela
+  const consultarPosicaoAoVivo = useCallback(async () => {
+    if (!firebaseAtivo && cenarioDemo === 'ao-vivo-sim' && status.estado === 'voo') {
+      setPosicaoAoVivo({
+        fonte: 'ao-vivo',
+        provedor: 'adsb.lol',
+        lng: status.coordenada[0],
+        lat: status.coordenada[1],
+        altitude: 11277, // FL370 (~37.000 ft)
+        velocidadeMs: 245, // ~882 km/h
+        rumo: status.rumo,
+        noSolo: false,
+        icao24: 'e48c55',
+        callsign: status.eventoAtual?.callsign || 'TAM8084',
+        aeronaveTipo: 'A320',
+        matricula: 'PR-MYP',
+        atualizadoEm: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const ev = status.eventoAtual;
+    if (!ev || ev.tipo !== 'voo' || !estaNaJanelaOpenSky(ev, agoraSimulado)) {
+      setPosicaoAoVivo(null);
+      return;
+    }
+
+    try {
+      const qs = new URLSearchParams({ mes: config.mesAtivo });
+      if (!firebaseAtivo) {
+        qs.set('inicioUtc', ev.inicioUtc);
+        qs.set('fimUtc', ev.fimUtc);
+        if (ev.origem) qs.set('origem', ev.origem);
+        if (ev.destino) qs.set('destino', ev.destino);
+        if (ev.numeroVoo) qs.set('numeroVoo', ev.numeroVoo);
+        if (ev.icao24) qs.set('icao24', ev.icao24);
+        if (ev.callsign) qs.set('callsign', ev.callsign);
+      }
+
+      const res = await fetch(
+        `/api/posicao/${encodeURIComponent(ev.id)}?${qs.toString()}`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as PosicaoAoVivo;
+      setPosicaoAoVivo(data);
+    } catch {
+      setPosicaoAoVivo({ fonte: 'estimada', motivo: 'erro-cliente' });
+    }
+  }, [
+    firebaseAtivo,
+    cenarioDemo,
+    status.estado,
+    status.eventoAtual,
+    status.coordenada,
+    status.rumo,
+    agoraSimulado,
+    config.mesAtivo,
+  ]);
+
+  useEffect(() => {
+    consultarPosicaoAoVivo();
+    const timer = setInterval(consultarPosicaoAoVivo, 60_000);
+    return () => clearInterval(timer);
+  }, [consultarPosicaoAoVivo]);
+
+  // Portão de convite quando ativado nas configurações
+  if (config.exigirConvite && !conviteAutorizado) {
+    return (
+      <ConviteGate
+        nomePiloto={config.nomePiloto}
+        onValidado={(codigo) => {
+          salvarConviteAceito(codigo);
+          setConviteAutorizado(true);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      {/* Cabeçalho */}
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <Plane className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-bold text-sm sm:text-lg leading-tight truncate">
+                Onde está o {config.nomePiloto}? ✈️
+              </h1>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block truncate">
+                Radar oficial da família · Porque no Zap ele só visualiza quando pousa
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {!firebaseAtivo && (
+              <Badge variant="secondary" className="hidden md:inline-flex">
+                <Sparkles className="w-3 h-3 text-sky-500" />
+                Modo Demo
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 sm:h-9 sm:w-9"
+              onClick={() => {
+                setAgora(new Date());
+                consultarPosicaoAoVivo();
+              }}
+              title="Atualizar posição agora"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 sm:h-9 sm:w-9"
+              onClick={alternarTema}
+              title={darkMode ? 'Tema claro' : 'Tema escuro'}
+            >
+              {darkMode ? (
+                <Sun className="w-4 h-4" />
+              ) : (
+                <Moon className="w-4 h-4" />
+              )}
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 px-2.5 sm:px-3" asChild>
+              <Link href="/admin">
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden xs:inline sm:inline">Admin</span>
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Conteúdo principal */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-3.5 sm:py-5 space-y-3.5 sm:space-y-5 pb-8">
+        {/* Barra interativa de demonstração (somente quando Firebase não está configurado) */}
+        {!firebaseAtivo && (
+          <Alert>
+            <Sparkles className="w-4 h-4 mt-0.5 shrink-0 text-sky-600" />
+            <div className="flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <AlertTitle className="text-xs sm:text-sm">
+                  Visualizando em modo demonstração local
+                </AlertTitle>
+                <AlertDescription>
+                  Teste os diferentes estados da caricatura abaixo ou configure
+                  suas chaves em <code>.env.local</code> para conectar ao
+                  Firebase e OpenSky.
+                </AlertDescription>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ['padrao', 'Voo (Estimado)'],
+                    ['ao-vivo-sim', 'Voo (Ao vivo)'],
+                    ['pernoite', 'Pernoite'],
+                    ['folga', 'Folga'],
+                    ['treinamento', 'Simulador'],
+                    ['vazio', 'Sem escala'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <Button
+                    key={key}
+                    size="sm"
+                    variant={cenarioDemo === key ? 'default' : 'outline'}
+                    onClick={() => setCenarioDemo(key)}
+                    className="h-7 px-2.5 text-xs"
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </Alert>
+        )}
+
+        {carregando ? (
+          <div className="h-96 flex items-center justify-center text-sm text-slate-500">
+            Sincronizando escala...
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-5 items-start">
+            {/* Mapa principal */}
+            <div className="lg:col-span-8 space-y-3.5 sm:space-y-5">
+              <Mapa
+                status={status}
+                posicaoAoVivo={posicaoAoVivo}
+                nomePiloto={config.nomePiloto}
+                darkMode={darkMode}
+              />
+
+              <div className="hidden lg:block">
+                <ResumoMesCard
+                  resumo={resumoMes}
+                  mesAtivo={config.mesAtivo}
+                />
+              </div>
+            </div>
+
+            {/* Coluna lateral: status atual + próximos dias */}
+            <div className="lg:col-span-4 space-y-3.5 sm:space-y-5">
+              <StatusCard
+                status={status}
+                posicaoAoVivo={posicaoAoVivo}
+                config={config}
+              />
+              <ProximosDias
+                eventos={status.proximosEventos}
+                baseIata={config.baseIata}
+              />
+              <div className="lg:hidden">
+                <ResumoMesCard
+                  resumo={resumoMes}
+                  mesAtivo={config.mesAtivo}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
