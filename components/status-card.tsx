@@ -107,10 +107,21 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
                   status.aeroportoAtual ? ` em ${status.aeroportoAtual.cidade}` : ''
                 } 🌙`}
               {status.estado === 'folga' &&
-                `MILAGRE! ${nome} tá de folga${
-                  status.aeroportoAtual ? ` em ${status.aeroportoAtual.cidade}` : ''
+                `MILAGRE! ${nome} tá ${
+                  status.aeroportoAtual?.iata === 'CASA'
+                    ? 'em casa (São Vicente)'
+                    : `de folga${
+                        status.aeroportoAtual
+                          ? ` em ${status.aeroportoAtual.cidade}`
+                          : ''
+                      }`
                 } 🎉`}
-              {status.estado === 'sobreaviso' && `${nome} tá de sobreaviso 📞`}
+              {status.estado === 'sobreaviso' &&
+                (status.aeroportoAtual?.iata === 'CASA'
+                  ? `${nome} tá de sobreaviso em casa (HSB) 📞`
+                  : `${nome} tá de reserva no aeroporto (${
+                      status.eventoAtual?.codigoAtividade || 'ASB'
+                    }) 📞`)}
               {status.estado === 'treinamento' && `${nome} tá no simulador 🎮`}
             </CardTitle>
           </div>
@@ -310,10 +321,16 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               <div className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-sky-500" />
                 <span className="font-semibold">
-                  {status.aeroportoAtual.cidade}, {status.aeroportoAtual.pais}
+                  {status.aeroportoAtual.iata === 'CASA'
+                    ? 'São Vicente, SP'
+                    : `${status.aeroportoAtual.cidade}, ${status.aeroportoAtual.pais}`}
                 </span>
               </div>
-              <Badge variant="outline">{status.aeroportoAtual.iata}</Badge>
+              <Badge variant="outline">
+                {status.aeroportoAtual.iata === 'CASA'
+                  ? '🏠 Em casa'
+                  : status.aeroportoAtual.iata}
+              </Badge>
             </div>
 
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">

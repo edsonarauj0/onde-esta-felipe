@@ -13,6 +13,21 @@ for (const airport of airportsList) {
 
 export const AEROPORTO_PADRAO: Aeroporto = byIata.get('GRU')!;
 
+/**
+ * Localização "Em casa" do Felipe (São Vicente, SP — Parque São Vicente).
+ * Usada em folgas (DO/DR/OFF), intervalos na base e sobreaviso em casa (HSB).
+ */
+export const CASA_FELIPE: Aeroporto = {
+  iata: 'CASA',
+  icao: 'CASA',
+  nome: 'Em casa · São Vicente',
+  cidade: 'São Vicente',
+  pais: 'Brasil',
+  lat: -23.961,
+  lng: -46.3946,
+  tz: 'America/Sao_Paulo',
+};
+
 export function getAeroporto(codigo?: string | null): Aeroporto | null {
   if (!codigo) return null;
   const clean = codigo.trim().toUpperCase();

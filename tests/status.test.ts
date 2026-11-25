@@ -80,10 +80,43 @@ describe('getStatus', () => {
     expect(res.proximoEvento?.id).toBe('voo-2');
   });
 
-  it('retorna folga em São Paulo após o retorno', () => {
+  it('retorna folga em casa (São Vicente) após o retorno para a base', () => {
     const res = getStatus(EVENTOS_BASE, new Date('2026-11-13T12:00:00Z'));
     expect(res.estado).toBe('folga');
-    expect(res.aeroportoAtual?.iata).toBe('GRU');
+    expect(res.aeroportoAtual?.iata).toBe('CASA');
+    expect(res.aeroportoAtual?.cidade).toBe('São Vicente');
+  });
+
+  it('posiciona HSB em casa (São Vicente) e ASB no aeroporto', () => {
+    const eventosStandby: EventoEscala[] = [
+      {
+        id: 'hsb-1',
+        tipo: 'sobreaviso',
+        codigoAtividade: 'HSB',
+        origem: 'CGH',
+        destino: 'CGH',
+        inicioUtc: '2026-11-15T03:05:00Z',
+        fimUtc: '2026-11-15T08:10:00Z',
+      },
+      {
+        id: 'asb-1',
+        tipo: 'sobreaviso',
+        codigoAtividade: 'ASB',
+        origem: 'CGH',
+        destino: 'CGH',
+        inicioUtc: '2026-11-15T12:35:00Z',
+        fimUtc: '2026-11-15T18:30:00Z',
+      },
+    ];
+
+    const hsb = getStatus(eventosStandby, new Date('2026-11-15T05:00:00Z'));
+    expect(hsb.estado).toBe('sobreaviso');
+    expect(hsb.aeroportoAtual?.iata).toBe('CASA');
+    expect(hsb.aeroportoAtual?.cidade).toBe('São Vicente');
+
+    const asb = getStatus(eventosStandby, new Date('2026-11-15T14:00:00Z'));
+    expect(asb.estado).toBe('sobreaviso');
+    expect(asb.aeroportoAtual?.iata).toBe('CGH');
   });
 
   it('ignora voos cancelados e respeita atraso manual', () => {

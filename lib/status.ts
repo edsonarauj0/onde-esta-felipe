@@ -5,7 +5,7 @@ import { lineString, point } from '@turf/helpers';
 import length from '@turf/length';
 import { formatInTimeZone } from 'date-fns-tz';
 import { ptBR } from 'date-fns/locale';
-import { AEROPORTO_PADRAO, getAeroporto } from './airports';
+import { AEROPORTO_PADRAO, CASA_FELIPE, getAeroporto } from './airports';
 import type {
   Aeroporto,
   ConfiguracoesApp,
@@ -166,6 +166,18 @@ function inferirAeroportoAtual(
   return ultimoDestino ?? base;
 }
 
+function isAeroportoDaBase(iata: string | undefined, baseIata: string): boolean {
+  if (!iata) return true;
+  const upper = iata.toUpperCase();
+  const baseUpper = baseIata.toUpperCase();
+  if (upper === baseUpper) return true;
+  // Base São Paulo inclui Guarulhos, Congonhas e Viracopos
+  if (['GRU', 'CGH', 'VCP'].includes(baseUpper)) {
+    return ['GRU', 'CGH', 'VCP'].includes(upper);
+  }
+  return false;
+}
+
 /**
  * Função principal: determina onde o Felipe está em um dado instante `agora`.
  */
@@ -231,10 +243,11 @@ export function getStatus(
   const proximoEvento = proximosEventos[0] ?? null;
 
   if (!eventoAtual) {
-    // Entre eventos: verifica se o último destino foi fora da base -> pernoite implícito ou folga na base
-    const aeroportoAtual = inferirAeroportoAtual(eventosValidos, agoraMs, base);
-    const estadoImplicito =
-      aeroportoAtual.iata !== base.iata ? 'pernoite' : 'folga';
+    // Entre eventos: se o último destino foi fora da base -> pernoite; se na base -> em casa (São Vicente)
+    const ultimoAeroporto = inferirAeroportoAtual(eventosValidos, agoraMs, base);
+    const naBase = isAeroportoDaBase(ultimoAeroporto.iata, base.iata);
+    const estadoImplicito = naBase ? 'folga' : 'pernoite';
+    const localAtual = naBase ? CASA_FELIPE : ultimoAeroporto;
 
     return {
       estado: estadoImplicito,
@@ -242,12 +255,12 @@ export function getStatus(
       proximoEvento,
       proximosEventos: proximosEventos.slice(0, 12),
       progresso: 0,
-      coordenada: [aeroportoAtual.lng, aeroportoAtual.lat],
+      coordenada: [localAtual.lng, localAtual.lat],
       rumo: 0,
       rota: null,
       origemAeroporto: null,
       destinoAeroporto: null,
-      aeroportoAtual,
+      aeroportoAtual: localAtual,
       inicioEfetivoUtc: null,
       fimEfetivoUtc: null,
       tempoRestanteMs: proximoEvento
@@ -294,9 +307,18 @@ export function getStatus(
     };
   }
 
-  const aeroportoAtual =
+  const aeroportoEvento =
     getAeroporto(eventoAtual.destino ?? eventoAtual.origem) ??
     inferirAeroportoAtual(eventosValidos, agoraMs, base);
+
+  // Folga na base (DO/DR/OFF) ou Sobreaviso em casa (HSB) -> posiciona em casa (São Vicente, SP)
+  const emCasa =
+    (eventoAtual.tipo === 'folga' &&
+      isAeroportoDaBase(aeroportoEvento.iata, base.iata)) ||
+    (eventoAtual.tipo === 'sobreaviso' &&
+      eventoAtual.codigoAtividade?.toUpperCase() === 'HSB');
+
+  const aeroportoAtual = emCasa ? CASA_FELIPE : aeroportoEvento;
 
   return {
     estado: eventoAtual.tipo,

@@ -846,6 +846,13 @@ export function AdminDashboard() {
                 <span className="hidden xs:inline sm:inline">Mapa</span>
               </Link>
             </Button>
+            <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs shrink-0" asChild>
+              <Link href="/?simular=1">
+                <Sparkles className="w-3.5 h-3.5 text-sky-500" />
+                <span className="hidden sm:inline">Simular estados</span>
+                <span className="sm:hidden">Simular</span>
+              </Link>
+            </Button>
             <div className="min-w-0">
               <h1 className="font-bold text-sm sm:text-base truncate">
                 Painel Admin · Escala
