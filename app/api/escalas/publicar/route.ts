@@ -10,10 +10,13 @@ export const runtime = 'nodejs';
 
 const PublicarSchema = z.object({
   mes: z.string().regex(/^\d{4}-\d{2}$/, 'Mês deve estar no formato YYYY-MM'),
-  modo: z.enum(['substituir', 'complementar']).default('substituir'),
+  modo: z
+    .enum(['atualizar-futuros', 'substituir', 'complementar'])
+    .default('atualizar-futuros'),
   ativarMes: z.boolean().default(true),
   tripulante: z.string().nullable().optional(),
   formato: z.string().optional(),
+  nomeArquivo: z.string().max(160).optional(),
   eventos: z.array(EventoEscalaSchema),
 });
 
@@ -36,7 +39,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const { mes, modo, ativarMes, eventos, tripulante, formato } = parsed.data;
+    const { mes, modo, ativarMes, eventos, tripulante, formato, nomeArquivo } =
+      parsed.data;
     const result = await publicarEscalaNoFirestore({
       mes,
       modo,
@@ -44,6 +48,8 @@ export async function POST(request: Request) {
       eventos,
       tripulante,
       formato,
+      nomeArquivo,
+      publicadoPor: auth.token?.email ?? null,
     });
 
     return NextResponse.json({
@@ -52,6 +58,9 @@ export async function POST(request: Request) {
       mes,
       modo,
       totalPublicado: result.totalPublicado,
+      passadosPreservados: result.passadosPreservados,
+      futurosSubstituidos: result.futurosSubstituidos,
+      importacao: result.importacao,
     });
   } catch (err) {
     const code = (err as { code?: unknown })?.code;

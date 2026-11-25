@@ -4,6 +4,7 @@ import React from 'react';
 import { Clock, Globe2, MapPin, Plane } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { formatarMesAno } from '@/lib/status';
 import type { ResumoMes } from '@/lib/types';
 
 interface ResumoMesCardProps {
@@ -27,7 +28,7 @@ export function ResumoMesCard({ resumo, mesAtivo }: ResumoMesCardProps) {
             Balanço da saudade no mês 💔
           </CardTitle>
           <Badge variant="secondary" className="font-mono">
-            {mesAtivo}
+            {formatarMesAno(mesAtivo)}
           </Badge>
         </div>
       </CardHeader>

@@ -10,6 +10,7 @@ import type {
   Aeroporto,
   ConfiguracoesApp,
   EventoEscala,
+  ModoPublicacao,
   ResumoMes,
   RotaGeoJSON,
   StatusFelipe,
@@ -177,7 +178,7 @@ export function getStatus(
   const base = getAeroporto(cfg.baseIata) ?? AEROPORTO_PADRAO;
 
   const atrasoPrivMs =
-    cfg.modoPrivacidade && cfg.atrasoPrivacidadeMinutos > 0
+    cfg.atrasoPrivacidadeMinutos > 0
       ? cfg.atrasoPrivacidadeMinutos * 60_000
       : 0;
 
@@ -352,7 +353,110 @@ export function formatarHoraLocal(
 }
 
 export function formatarDataLocal(isoUtc: string, timeZone: string): string {
-  return formatarHoraLocal(isoUtc, timeZone, "EEE, dd 'de' MMM");
+  return formatarHoraLocal(isoUtc, timeZone, 'dd/MM/yyyy');
+}
+
+export function formatarDataHoraUtc(isoUtc?: string | null): string {
+  if (!isoUtc) return '—';
+  return formatarHoraLocal(isoUtc, 'UTC', 'dd/MM/yyyy HH:mm');
+}
+
+export function formatarMesAno(yyyyMm?: string | null): string {
+  if (!yyyyMm) return '';
+  const match = yyyyMm.match(/^(\d{4})-(\d{2})$/);
+  return match ? `${match[2]}/${match[1]}` : yyyyMm;
+}
+
+/**
+ * Calcula quais eventos devem ser mantidos, removidos e gravados ao importar
+ * uma nova escala no mesmo mês:
+ * - `atualizar-futuros`: preserva eventos já concluídos (fimUtc < agora) e substitui apenas os em andamento/futuros.
+ * - `substituir`: apaga todos os eventos existentes do mês e grava apenas os novos.
+ * - `complementar`: mantém todos os existentes e adiciona/atualiza os novos por ID.
+ */
+export function calcularMudancasImportacao(
+  existentes: EventoEscala[],
+  novos: EventoEscala[],
+  modo: ModoPublicacao,
+  agora: Date = new Date()
+): {
+  idsParaRemover: string[];
+  eventosParaGravar: EventoEscala[];
+  eventosFinais: EventoEscala[];
+  passadosPreservados: number;
+  futurosSubstituidos: number;
+} {
+  const agoraMs = agora.getTime();
+
+  if (modo === 'substituir') {
+    const idsNovos = new Set(novos.map((e) => e.id));
+    const idsParaRemover = existentes
+      .filter((e) => !idsNovos.has(e.id))
+      .map((e) => e.id);
+    return {
+      idsParaRemover,
+      eventosParaGravar: novos,
+      eventosFinais: novos,
+      passadosPreservados: 0,
+      futurosSubstituidos: existentes.length,
+    };
+  }
+
+  if (modo === 'complementar') {
+    const mapa = new Map<string, EventoEscala>();
+    for (const ev of existentes) mapa.set(ev.id, ev);
+    for (const ev of novos) mapa.set(ev.id, ev);
+    const finais = Array.from(mapa.values()).sort(
+      (a, b) =>
+        new Date(a.inicioUtc).getTime() - new Date(b.inicioUtc).getTime()
+    );
+    return {
+      idsParaRemover: [],
+      eventosParaGravar: novos,
+      eventosFinais: finais,
+      passadosPreservados: existentes.filter(
+        (e) => getIntervaloEfetivo(e).fim.getTime() < agoraMs
+      ).length,
+      futurosSubstituidos: 0,
+    };
+  }
+
+  // Modo 'atualizar-futuros' (padrão recomendado para mudança de escala no meio do mês)
+  const passadosExistentes = existentes.filter(
+    (e) => getIntervaloEfetivo(e).fim.getTime() < agoraMs
+  );
+  const futurosExistentes = existentes.filter(
+    (e) => getIntervaloEfetivo(e).fim.getTime() >= agoraMs
+  );
+
+  // Dos novos eventos do PDF:
+  // - todos os em andamento/futuros entram (substituindo os futuros antigos)
+  // - eventos passados do PDF só entram se ainda não havia nenhum evento passado salvo
+  const novosParaGravar =
+    passadosExistentes.length > 0
+      ? novos.filter((e) => getIntervaloEfetivo(e).fim.getTime() >= agoraMs)
+      : novos;
+
+  const idsGravados = new Set(novosParaGravar.map((e) => e.id));
+  const idsParaRemover = futurosExistentes
+    .filter((e) => !idsGravados.has(e.id))
+    .map((e) => e.id);
+
+  const mapaFinal = new Map<string, EventoEscala>();
+  for (const ev of passadosExistentes) mapaFinal.set(ev.id, ev);
+  for (const ev of novosParaGravar) mapaFinal.set(ev.id, ev);
+
+  const eventosFinais = Array.from(mapaFinal.values()).sort(
+    (a, b) => new Date(a.inicioUtc).getTime() - new Date(b.inicioUtc).getTime()
+  );
+
+  return {
+    idsParaRemover,
+    eventosParaGravar: novosParaGravar,
+    eventosFinais,
+    passadosPreservados: passadosExistentes.length,
+    futurosSubstituidos: futurosExistentes.length,
+  };
 }
 
 export function formatarDuracao(ms: number | null): string {

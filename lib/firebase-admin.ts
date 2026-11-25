@@ -7,8 +7,13 @@ import {
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import type { ConfiguracoesApp, EventoEscala } from './types';
-import { CONFIG_PADRAO } from './status';
+import type {
+  ConfiguracoesApp,
+  EventoEscala,
+  ImportacaoHistorico,
+  ModoPublicacao,
+} from './types';
+import { calcularMudancasImportacao, CONFIG_PADRAO } from './status';
 
 export function isFirebaseAdminConfigured(): boolean {
   return Boolean(
@@ -178,36 +183,89 @@ export async function atualizarIcao24NoFirestore(
 
 export async function publicarEscalaNoFirestore(params: {
   mes: string;
-  modo: 'substituir' | 'complementar';
+  modo: ModoPublicacao;
   ativarMes: boolean;
   eventos: EventoEscala[];
   tripulante?: string | null;
   formato?: string;
-}): Promise<{ demo: boolean; totalPublicado: number }> {
-  const { mes, modo, ativarMes, eventos, tripulante, formato } = params;
+  nomeArquivo?: string;
+  publicadoPor?: string | null;
+}): Promise<{
+  demo: boolean;
+  totalPublicado: number;
+  passadosPreservados: number;
+  futurosSubstituidos: number;
+  importacao: ImportacaoHistorico;
+}> {
+  const {
+    mes,
+    modo,
+    ativarMes,
+    eventos,
+    tripulante,
+    formato = 'crewtopia',
+    nomeArquivo = 'Escala manual',
+    publicadoPor = null,
+  } = params;
+
+  const agora = new Date();
+  const totalVoos = eventos.filter((e) => e.tipo === 'voo' && !e.cancelado).length;
 
   if (!isFirebaseAdminConfigured()) {
-    return { demo: true, totalPublicado: eventos.length };
+    const importacao: ImportacaoHistorico = {
+      id: `imp-${Date.now()}`,
+      criadoEm: agora.toISOString(),
+      mes,
+      nomeArquivo,
+      formato,
+      modo,
+      tripulante: tripulante ?? null,
+      totalEventos: eventos.length,
+      totalVoos,
+      passadosPreservados: 0,
+      futurosSubstituidos: 0,
+      publicadoPor,
+    };
+    return {
+      demo: true,
+      totalPublicado: eventos.length,
+      passadosPreservados: 0,
+      futurosSubstituidos: 0,
+      importacao,
+    };
   }
 
   const db = getAdminDb()!;
   const colRef = db.collection(`escalas/${mes}/eventos`);
 
-  if (modo === 'substituir') {
-    const existentes = await colRef.listDocuments();
-    const chunkSize = 400;
-    for (let i = 0; i < existentes.length; i += chunkSize) {
-      const batch = db.batch();
-      for (const docRef of existentes.slice(i, i + chunkSize)) {
-        batch.delete(docRef);
-      }
-      await batch.commit();
-    }
-  }
+  const existentesSnap = await colRef.get();
+  const existentes: EventoEscala[] = existentesSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<EventoEscala, 'id'>),
+  }));
+
+  const {
+    idsParaRemover,
+    eventosParaGravar,
+    eventosFinais,
+    passadosPreservados,
+    futurosSubstituidos,
+  } = calcularMudancasImportacao(existentes, eventos, modo, agora);
 
   const chunkSize = 400;
-  for (let i = 0; i < eventos.length; i += chunkSize) {
-    const chunk = eventos.slice(i, i + chunkSize);
+
+  // Remove apenas os eventos que devem sair (todos no modo 'substituir', ou apenas futuros antigos em 'atualizar-futuros')
+  for (let i = 0; i < idsParaRemover.length; i += chunkSize) {
+    const batch = db.batch();
+    for (const id of idsParaRemover.slice(i, i + chunkSize)) {
+      batch.delete(colRef.doc(id));
+    }
+    await batch.commit();
+  }
+
+  // Grava os eventos novos/atualizados
+  for (let i = 0; i < eventosParaGravar.length; i += chunkSize) {
+    const chunk = eventosParaGravar.slice(i, i + chunkSize);
     const batch = db.batch();
     for (const ev of chunk) {
       const docRef = colRef.doc(ev.id);
@@ -222,10 +280,10 @@ export async function publicarEscalaNoFirestore(params: {
   await db.doc(`escalas/${mes}`).set(
     {
       mes,
-      totalEventos: eventos.length,
+      totalEventos: eventosFinais.length,
       ...(tripulante ? { tripulante } : {}),
       ...(formato ? { formato } : {}),
-      atualizadoEm: new Date().toISOString(),
+      atualizadoEm: agora.toISOString(),
     },
     { merge: true }
   );
@@ -234,13 +292,37 @@ export async function publicarEscalaNoFirestore(params: {
     await db.doc('configuracoes/app').set(
       {
         mesAtivo: mes,
-        atualizadoEm: new Date().toISOString(),
+        atualizadoEm: agora.toISOString(),
       },
       { merge: true }
     );
   }
 
-  return { demo: false, totalPublicado: eventos.length };
+  // Registra entrada no histórico de importações
+  const registroSemId: Omit<ImportacaoHistorico, 'id'> = {
+    criadoEm: agora.toISOString(),
+    mes,
+    nomeArquivo,
+    formato,
+    modo,
+    tripulante: tripulante ?? null,
+    totalEventos: eventosFinais.length,
+    totalVoos: eventosFinais.filter((e) => e.tipo === 'voo' && !e.cancelado)
+      .length,
+    passadosPreservados,
+    futurosSubstituidos,
+    publicadoPor,
+  };
+
+  const impDoc = await db.collection('importacoes').add(registroSemId);
+
+  return {
+    demo: false,
+    totalPublicado: eventosParaGravar.length,
+    passadosPreservados,
+    futurosSubstituidos,
+    importacao: { id: impDoc.id, ...registroSemId },
+  };
 }
 
 /**

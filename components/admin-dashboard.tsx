@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Copy,
   FileText,
+  History,
   KeyRound,
   LogOut,
   Plus,
@@ -64,23 +65,39 @@ import {
   lerConfigDemo,
   lerConvitesDemo,
   lerEventosDemo,
+  lerImportacoesDemo,
   salvarConfigDemo,
   salvarConvitesDemo,
   salvarEventosDemo,
+  salvarImportacaoDemo,
 } from '@/lib/local-store';
-import { CONFIG_PADRAO } from '@/lib/status';
+import {
+  calcularMudancasImportacao,
+  CONFIG_PADRAO,
+  formatarDataHoraUtc,
+  formatarHoraLocal,
+  formatarMesAno,
+} from '@/lib/status';
 import type {
   ConfiguracoesApp,
   Convite,
   EventoEscala,
+  ImportacaoHistorico,
+  ModoPublicacao,
   TipoEvento,
 } from '@/lib/types';
 
 type RevisaoFormValues = {
   mes: string;
-  modo: 'substituir' | 'complementar';
+  modo: ModoPublicacao;
   ativarMes: boolean;
   eventos: EventoEscala[];
+};
+
+const MODO_LABEL: Record<ModoPublicacao, string> = {
+  'atualizar-futuros': 'Preservar passados',
+  substituir: 'Substituir mês',
+  complementar: 'Complementar',
 };
 
 const TIPOS_EVENTO: TipoEvento[] = [
@@ -91,18 +108,45 @@ const TIPOS_EVENTO: TipoEvento[] = [
   'treinamento',
 ];
 
-function isoParaDatetimeLocal(iso: string): string {
-  try {
-    return new Date(iso).toISOString().slice(0, 16);
-  } catch {
-    return '';
-  }
+/**
+ * Aplica máscara "dd/mm/aaaa HH:mm" enquanto o usuário digita.
+ */
+function mascararDataHoraBr(valor: string): string {
+  const digitos = valor.replace(/\D/g, '').slice(0, 12);
+  let out = '';
+  if (digitos.length > 0) out += digitos.slice(0, 2);
+  if (digitos.length > 2) out += '/' + digitos.slice(2, 4);
+  if (digitos.length > 4) out += '/' + digitos.slice(4, 8);
+  if (digitos.length > 8) out += ' ' + digitos.slice(8, 10);
+  if (digitos.length > 10) out += ':' + digitos.slice(10, 12);
+  return out;
 }
 
-function datetimeLocalParaIso(val: string): string {
-  if (!val) return new Date().toISOString();
-  // Interpretado como UTC na revisão da escala (padrão aeronáutico Zulu)
-  return val.endsWith('Z') ? val : `${val}:00.000Z`;
+/**
+ * Converte "dd/mm/aaaa HH:mm" (UTC) para ISO 8601 UTC. Retorna null se inválido.
+ */
+function dataHoraBrParaIsoUtc(val: string): string | null {
+  const m = val
+    .trim()
+    .match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  const hh = m[4] ? Number(m[4]) : 0;
+  const min = m[5] ? Number(m[5]) : 0;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31 || hh > 23 || min > 59) {
+    return null;
+  }
+  const dt = new Date(Date.UTC(yyyy, mm - 1, dd, hh, min, 0));
+  if (
+    dt.getUTCFullYear() !== yyyy ||
+    dt.getUTCMonth() !== mm - 1 ||
+    dt.getUTCDate() !== dd
+  ) {
+    return null;
+  }
+  return dt.toISOString();
 }
 
 export function AdminDashboard() {
@@ -143,9 +187,13 @@ export function AdminDashboard() {
   // Modal de edição rápida de evento
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<EventoEscala | null>(null);
+  const [editInicioBr, setEditInicioBr] = useState('');
+  const [editFimBr, setEditFimBr] = useState('');
 
-  // Convites e configurações
+  // Convites, histórico de importações e configurações
   const [convites, setConvites] = useState<Convite[]>([]);
+  const [importacoes, setImportacoes] = useState<ImportacaoHistorico[]>([]);
+  const [arquivoOrigem, setArquivoOrigem] = useState<string>('Escala manual');
   const [novoRotulo, setNovoRotulo] = useState('');
   const [novoCodigo, setNovoCodigo] = useState('');
   const [config, setConfig] = useState<ConfiguracoesApp>(CONFIG_PADRAO);
@@ -159,7 +207,7 @@ export function AdminDashboard() {
   const form = useForm<RevisaoFormValues>({
     defaultValues: {
       mes: new Date().toISOString().slice(0, 7),
-      modo: 'substituir',
+      modo: 'atualizar-futuros',
       ativarMes: true,
       eventos: [],
     },
@@ -178,6 +226,7 @@ export function AdminDashboard() {
       replace(lerEventosDemo());
       setConfig(lerConfigDemo());
       setConvites(lerConvitesDemo());
+      setImportacoes(lerImportacoesDemo());
       return;
     }
 
@@ -207,12 +256,12 @@ export function AdminDashboard() {
     return { Authorization: `Bearer ${token}` };
   };
 
-  // Carrega status das integrações, configurações e convites
+  // Carrega status das integrações, configurações, convites e histórico de importações
   useEffect(() => {
     if (!isAdmin) return;
     const carregar = async () => {
       try {
-        const resCfg = await fetch('/api/configuracoes');
+        const resCfg = await fetch('/api/configuracoes', { cache: 'no-store' });
         if (resCfg.ok) {
           const data = (await resCfg.json()) as {
             config: ConfiguracoesApp;
@@ -233,10 +282,19 @@ export function AdminDashboard() {
 
         if (firebaseAtivo) {
           const headers = await getAuthHeaders();
-          const resConv = await fetch('/api/convites', { headers });
+          const [resConv, resImp] = await Promise.all([
+            fetch('/api/convites', { headers, cache: 'no-store' }),
+            fetch('/api/importacoes', { headers, cache: 'no-store' }),
+          ]);
           if (resConv.ok) {
             const dataConv = (await resConv.json()) as { convites: Convite[] };
             setConvites(dataConv.convites);
+          }
+          if (resImp.ok) {
+            const dataImp = (await resImp.json()) as {
+              importacoes: ImportacaoHistorico[];
+            };
+            setImportacoes(dataImp.importacoes ?? []);
           }
         }
       } catch {
@@ -281,6 +339,7 @@ export function AdminDashboard() {
     setParseando(true);
     setAvisosParser([]);
     setEstatisticasParser(null);
+    setArquivoOrigem(file.name);
     try {
       const headers = await getAuthHeaders();
       const mesAtual = form.getValues('mes');
@@ -318,6 +377,9 @@ export function AdminDashboard() {
         };
         salvoNoFirebase?: boolean;
         demoPersist?: boolean;
+        importacao?: ImportacaoHistorico | null;
+        passadosPreservados?: number;
+        futurosSubstituidos?: number;
       };
 
       if (!res.ok) {
@@ -336,15 +398,38 @@ export function AdminDashboard() {
 
       if (data.salvoNoFirebase) {
         if (data.demoPersist) {
-          salvarEventosDemo(eventosExtraidos);
+          const modoAtual = form.getValues('modo');
+          const { eventosFinais, passadosPreservados, futurosSubstituidos } =
+            calcularMudancasImportacao(
+              lerEventosDemo(),
+              eventosExtraidos,
+              modoAtual
+            );
+          salvarEventosDemo(eventosFinais);
+          if (data.importacao) {
+            const regDemo: ImportacaoHistorico = {
+              ...data.importacao,
+              passadosPreservados,
+              futurosSubstituidos,
+              totalEventos: eventosFinais.length,
+            };
+            setImportacoes(salvarImportacaoDemo(regDemo));
+          }
           if (data.mesReferencia) {
             const nextCfg = { ...config, mesAtivo: data.mesReferencia };
             setConfig(nextCfg);
             salvarConfigDemo(nextCfg);
           }
+        } else if (data.importacao) {
+          setImportacoes((prev) => [data.importacao!, ...prev].slice(0, 30));
         }
+
+        const resumoPassado =
+          data.passadosPreservados && data.passadosPreservados > 0
+            ? ` · ${data.passadosPreservados} passados preservados`
+            : '';
         toast.success(
-          `PDF processado e salvo no Firebase (${eventosExtraidos.length} eventos em ${data.mesReferencia})!`
+          `PDF processado e salvo no Firebase (${eventosExtraidos.length} eventos em ${formatarMesAno(data.mesReferencia)}${resumoPassado})!`
         );
       } else {
         toast.success(
@@ -373,6 +458,7 @@ export function AdminDashboard() {
     setParseando(true);
     setAvisosParser([]);
     setEstatisticasParser(null);
+    setArquivoOrigem('Texto colado');
     try {
       const headers = {
         'Content-Type': 'application/json',
@@ -409,6 +495,7 @@ export function AdminDashboard() {
         };
         salvoNoFirebase?: boolean;
         demoPersist?: boolean;
+        importacao?: ImportacaoHistorico | null;
       };
 
       if (!res.ok) {
@@ -427,12 +514,31 @@ export function AdminDashboard() {
 
       if (data.salvoNoFirebase) {
         if (data.demoPersist) {
-          salvarEventosDemo(eventosExtraidos);
+          const modoAtual = form.getValues('modo');
+          const { eventosFinais, passadosPreservados, futurosSubstituidos } =
+            calcularMudancasImportacao(
+              lerEventosDemo(),
+              eventosExtraidos,
+              modoAtual
+            );
+          salvarEventosDemo(eventosFinais);
+          if (data.importacao) {
+            setImportacoes(
+              salvarImportacaoDemo({
+                ...data.importacao,
+                passadosPreservados,
+                futurosSubstituidos,
+                totalEventos: eventosFinais.length,
+              })
+            );
+          }
           if (data.mesReferencia) {
             const nextCfg = { ...config, mesAtivo: data.mesReferencia };
             setConfig(nextCfg);
             salvarConfigDemo(nextCfg);
           }
+        } else if (data.importacao) {
+          setImportacoes((prev) => [data.importacao!, ...prev].slice(0, 30));
         }
         toast.success(
           `Escala processada e salva no Firebase (${eventosExtraidos.length} eventos)!`
@@ -464,7 +570,8 @@ export function AdminDashboard() {
         body: JSON.stringify({
           ...values,
           tripulante: tripulanteDetectado,
-          formato: formatoDetectado ?? undefined,
+          formato: formatoDetectado ?? 'manual',
+          nomeArquivo: arquivoOrigem,
         }),
       });
 
@@ -473,6 +580,9 @@ export function AdminDashboard() {
         demo?: boolean;
         error?: string;
         totalPublicado?: number;
+        passadosPreservados?: number;
+        futurosSubstituidos?: number;
+        importacao?: ImportacaoHistorico;
       };
 
       if (!res.ok) {
@@ -481,26 +591,38 @@ export function AdminDashboard() {
       }
 
       if (data.demo) {
-        const atual = lerEventosDemo();
-        const resultado =
-          values.modo === 'substituir'
-            ? values.eventos
-            : [
-                ...atual.filter(
-                  (a) => !values.eventos.some((n) => n.id === a.id)
-                ),
-                ...values.eventos,
-              ];
-        salvarEventosDemo(resultado);
+        const { eventosFinais, passadosPreservados, futurosSubstituidos } =
+          calcularMudancasImportacao(
+            lerEventosDemo(),
+            values.eventos,
+            values.modo
+          );
+        salvarEventosDemo(eventosFinais);
+        if (data.importacao) {
+          setImportacoes(
+            salvarImportacaoDemo({
+              ...data.importacao,
+              passadosPreservados,
+              futurosSubstituidos,
+              totalEventos: eventosFinais.length,
+            })
+          );
+        }
         if (values.ativarMes) {
           const nextCfg = { ...config, mesAtivo: values.mes };
           setConfig(nextCfg);
           salvarConfigDemo(nextCfg);
         }
+      } else if (data.importacao) {
+        setImportacoes((prev) => [data.importacao!, ...prev].slice(0, 30));
       }
 
+      const detalhe =
+        data.passadosPreservados && data.passadosPreservados > 0
+          ? ` (${data.passadosPreservados} passados preservados)`
+          : '';
       toast.success(
-        `Escala ${values.mes} publicada (${data.totalPublicado} eventos)! A família já pode ver.`
+        `Escala ${formatarMesAno(values.mes)} publicada${detalhe}! A família já pode ver.`
       );
     } catch {
       toast.error('Falha ao publicar a escala.');
@@ -512,7 +634,17 @@ export function AdminDashboard() {
   // Salvar edição do modal
   const salvarEdicaoModal = () => {
     if (editIndex === null || !editDraft) return;
-    update(editIndex, editDraft);
+    const inicioIso = dataHoraBrParaIsoUtc(editInicioBr);
+    const fimIso = dataHoraBrParaIsoUtc(editFimBr);
+    if (!inicioIso || !fimIso) {
+      toast.error('Use o formato dd/mm/aaaa HH:mm nos campos de início e fim.');
+      return;
+    }
+    update(editIndex, {
+      ...editDraft,
+      inicioUtc: inicioIso,
+      fimUtc: fimIso,
+    });
     setEditIndex(null);
     setEditDraft(null);
     toast.success('Evento atualizado na revisão.');
@@ -789,7 +921,7 @@ export function AdminDashboard() {
               </CardHeader>
               <CardContent className="space-y-5">
                 {/* Opções do processador */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border">
                   <div>
                     <label className="text-xs font-medium text-slate-500">
                       Fuso horário no PDF
@@ -807,6 +939,29 @@ export function AdminDashboard() {
                         Horário de Brasília (BRT · padrão Crewtopia)
                       </option>
                       <option value="UTC">UTC (Zulu)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-slate-500">
+                      Ao reimportar no mesmo mês
+                    </label>
+                    <select
+                      value={form.watch('modo')}
+                      onChange={(e) =>
+                        form.setValue('modo', e.target.value as ModoPublicacao)
+                      }
+                      className="mt-1 flex h-9 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-xs"
+                    >
+                      <option value="atualizar-futuros">
+                        Preservar passados e atualizar futuros (Recomendado)
+                      </option>
+                      <option value="substituir">
+                        Substituir mês inteiro (apaga tudo)
+                      </option>
+                      <option value="complementar">
+                        Complementar (mesclar por ID)
+                      </option>
                     </select>
                   </div>
 
@@ -901,6 +1056,100 @@ export function AdminDashboard() {
                         : 'Processar e ir para revisão'}
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* HISTÓRICO DE IMPORTAÇÕES */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <History className="w-4 h-4 text-sky-500" />
+                      Histórico de importações
+                    </CardTitle>
+                    <CardDescription>
+                      Registro de todas as escalas publicadas no Firebase, com
+                      quantidade de eventos passados preservados e futuros
+                      atualizados.
+                    </CardDescription>
+                  </div>
+                  <Badge variant="secondary">{importacoes.length}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Data / Hora</TableHead>
+                      <TableHead>Mês</TableHead>
+                      <TableHead>Arquivo</TableHead>
+                      <TableHead>Modo</TableHead>
+                      <TableHead>Resultado</TableHead>
+                      <TableHead className="hidden sm:table-cell">
+                        Publicado por
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importacoes.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="text-center text-slate-500 py-8 text-xs sm:text-sm"
+                        >
+                          Nenhuma importação registrada ainda. Assim que você
+                          publicar uma escala, ela aparecerá aqui.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      importacoes.map((imp) => (
+                        <TableRow key={imp.id}>
+                          <TableCell className="font-mono text-xs whitespace-nowrap">
+                            {formatarHoraLocal(
+                              imp.criadoEm,
+                              'America/Sao_Paulo',
+                              'dd/MM/yyyy HH:mm'
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {formatarMesAno(imp.mes)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="max-w-[180px]">
+                            <div className="font-medium text-xs truncate">
+                              {imp.nomeArquivo}
+                            </div>
+                            <div className="text-[11px] text-slate-500 uppercase">
+                              {imp.formato}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="text-[11px] whitespace-nowrap">
+                              {MODO_LABEL[imp.modo] ?? imp.modo}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            <div className="font-medium">
+                              {imp.totalVoos} voos · {imp.totalEventos} eventos
+                            </div>
+                            {(imp.passadosPreservados > 0 ||
+                              imp.futurosSubstituidos > 0) && (
+                              <div className="text-[11px] text-slate-500">
+                                {imp.passadosPreservados} passados mantidos ·{' '}
+                                {imp.futurosSubstituidos} antigos trocados
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell text-xs text-slate-500">
+                            {imp.publicadoPor || 'Admin local'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1016,8 +1265,11 @@ export function AdminDashboard() {
                       {...form.register('modo')}
                       className="mt-1 flex h-9 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
                     >
+                      <option value="atualizar-futuros">
+                        Preservar passados e atualizar futuros (Recomendado)
+                      </option>
                       <option value="substituir">
-                        Substituir eventos do mês
+                        Substituir mês inteiro (apaga tudo)
                       </option>
                       <option value="complementar">
                         Complementar (mesclar por ID)
@@ -1096,11 +1348,11 @@ export function AdminDashboard() {
                                 </div>
                               )}
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {ev?.inicioUtc?.slice(0, 16).replace('T', ' ')}Z
+                            <TableCell className="font-mono text-xs whitespace-nowrap">
+                              {formatarDataHoraUtc(ev?.inicioUtc)}Z
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {ev?.fimUtc?.slice(0, 16).replace('T', ' ')}Z
+                            <TableCell className="font-mono text-xs whitespace-nowrap">
+                              {formatarDataHoraUtc(ev?.fimUtc)}Z
                             </TableCell>
                             <TableCell>
                               {ev?.cancelado ? (
@@ -1124,6 +1376,8 @@ export function AdminDashboard() {
                                 onClick={() => {
                                   setEditIndex(index);
                                   setEditDraft({ ...ev });
+                                  setEditInicioBr(formatarDataHoraUtc(ev?.inicioUtc));
+                                  setEditFimBr(formatarDataHoraUtc(ev?.fimUtc));
                                 }}
                               >
                                 Editar
@@ -1250,8 +1504,8 @@ export function AdminDashboard() {
               <CardHeader>
                 <CardTitle>Privacidade e preferências</CardTitle>
                 <CardDescription>
-                  Defina o nível de detalhe compartilhado com a família. Nunca
-                  armazenamos ou exibimos nomes de hotéis.
+                  Defina o nome exibido, base, atraso opcional na posição e a
+                  trava de convites para família e amigos.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 max-w-xl">
@@ -1284,24 +1538,6 @@ export function AdminDashboard() {
                       className="mt-1 uppercase font-mono"
                     />
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between rounded-xl border p-3.5">
-                  <div>
-                    <div className="font-medium text-sm">
-                      Modo privacidade (só cidade, sem hotel)
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Exibe apenas o aeroporto/cidade e nunca detalhes de
-                      hospedagem.
-                    </div>
-                  </div>
-                  <Switch
-                    checked={config.modoPrivacidade}
-                    onCheckedChange={(v) =>
-                      setConfig({ ...config, modoPrivacidade: v })
-                    }
-                  />
                 </div>
 
                 <div className="rounded-xl border p-3.5 space-y-2">
@@ -1453,34 +1689,34 @@ export function AdminDashboard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-slate-500">
-                    Início (UTC)
+                    Início UTC (dd/mm/aaaa HH:mm)
                   </label>
                   <Input
-                    type="datetime-local"
-                    value={isoParaDatetimeLocal(editDraft.inicioUtc)}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="25/11/2026 14:30"
+                    maxLength={16}
+                    value={editInicioBr}
                     onChange={(e) =>
-                      setEditDraft({
-                        ...editDraft,
-                        inicioUtc: datetimeLocalParaIso(e.target.value),
-                      })
+                      setEditInicioBr(mascararDataHoraBr(e.target.value))
                     }
-                    className="mt-1"
+                    className="mt-1 font-mono"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-500">
-                    Fim (UTC)
+                    Fim UTC (dd/mm/aaaa HH:mm)
                   </label>
                   <Input
-                    type="datetime-local"
-                    value={isoParaDatetimeLocal(editDraft.fimUtc)}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="25/11/2026 16:45"
+                    maxLength={16}
+                    value={editFimBr}
                     onChange={(e) =>
-                      setEditDraft({
-                        ...editDraft,
-                        fimUtc: datetimeLocalParaIso(e.target.value),
-                      })
+                      setEditFimBr(mascararDataHoraBr(e.target.value))
                     }
-                    className="mt-1"
+                    className="mt-1 font-mono"
                   />
                 </div>
               </div>

@@ -26,7 +26,8 @@ export async function POST(request: Request) {
     let fusoHorarioPdf = 'America/Sao_Paulo';
     let inferirPernoites = true;
     let salvarNoFirebase = false;
-    let modoPublicacao: 'substituir' | 'complementar' = 'substituir';
+    let modoPublicacao: 'atualizar-futuros' | 'substituir' | 'complementar' =
+      'atualizar-futuros';
     let ativarMes = true;
 
     if (contentType.includes('multipart/form-data')) {
@@ -55,7 +56,11 @@ export async function POST(request: Request) {
       if (typeof salvarField === 'string') {
         salvarNoFirebase = salvarField === 'true';
       }
-      if (modoField === 'complementar' || modoField === 'substituir') {
+      if (
+        modoField === 'atualizar-futuros' ||
+        modoField === 'complementar' ||
+        modoField === 'substituir'
+      ) {
         modoPublicacao = modoField;
       }
       if (typeof ativarField === 'string') {
@@ -90,7 +95,7 @@ export async function POST(request: Request) {
         fusoHorario?: string;
         inferirPernoites?: boolean;
         salvarNoFirebase?: boolean;
-        modo?: 'substituir' | 'complementar';
+        modo?: 'atualizar-futuros' | 'substituir' | 'complementar';
         ativarMes?: boolean;
       };
       textoExtraido = body.texto ?? '';
@@ -105,7 +110,11 @@ export async function POST(request: Request) {
       if (typeof body.salvarNoFirebase === 'boolean') {
         salvarNoFirebase = body.salvarNoFirebase;
       }
-      if (body.modo === 'complementar' || body.modo === 'substituir') {
+      if (
+        body.modo === 'atualizar-futuros' ||
+        body.modo === 'complementar' ||
+        body.modo === 'substituir'
+      ) {
         modoPublicacao = body.modo;
       }
       if (typeof body.ativarMes === 'boolean') ativarMes = body.ativarMes;
@@ -138,7 +147,9 @@ export async function POST(request: Request) {
       });
     }
 
-    let publicacao: { demo: boolean; totalPublicado: number } | null = null;
+    let publicacao: Awaited<
+      ReturnType<typeof publicarEscalaNoFirestore>
+    > | null = null;
     if (salvarNoFirebase && resultado.eventos.length > 0) {
       publicacao = await publicarEscalaNoFirestore({
         mes: resultado.mesReferencia,
@@ -147,6 +158,8 @@ export async function POST(request: Request) {
         eventos: resultado.eventos,
         tripulante: resultado.tripulante,
         formato: resultado.formato,
+        nomeArquivo: pdfFileName || 'Texto colado',
+        publicadoPor: auth.token?.email ?? null,
       });
     }
 
@@ -156,6 +169,9 @@ export async function POST(request: Request) {
       demoAuth: auth.demo,
       salvoNoFirebase: Boolean(publicacao),
       demoPersist: publicacao?.demo ?? auth.demo,
+      importacao: publicacao?.importacao ?? null,
+      passadosPreservados: publicacao?.passadosPreservados ?? 0,
+      futurosSubstituidos: publicacao?.futurosSubstituidos ?? 0,
       pdfArquivadoStorage: storageInfo,
       caracteresExtraidos: textoExtraido.length,
     });

@@ -100,6 +100,26 @@ export type StatusFelipe = {
   privacidadeAplicada: boolean;
 };
 
+export type ModoPublicacao =
+  | 'atualizar-futuros'
+  | 'substituir'
+  | 'complementar';
+
+export type ImportacaoHistorico = {
+  id: string;
+  criadoEm: string;
+  mes: string; // YYYY-MM
+  nomeArquivo: string;
+  formato: string;
+  modo: ModoPublicacao;
+  tripulante?: string | null;
+  totalEventos: number;
+  totalVoos: number;
+  passadosPreservados: number;
+  futurosSubstituidos: number;
+  publicadoPor?: string | null;
+};
+
 export type ResumoMes = {
   totalVoos: number;
   totalPernoites: number;

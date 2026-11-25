@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calcularMudancasImportacao,
   calcularResumoMes,
   estaNaJanelaOpenSky,
+  formatarDataHoraUtc,
+  formatarDataLocal,
+  formatarMesAno,
   getStatus,
 } from '@/lib/status';
 import type { EventoEscala } from '@/lib/types';
@@ -132,5 +136,80 @@ describe('estaNaJanelaOpenSky', () => {
   it('bloqueia consulta fora da janela para economizar créditos', () => {
     expect(estaNaJanelaOpenSky(voo, new Date('2026-11-10T20:59:00Z'))).toBe(false);
     expect(estaNaJanelaOpenSky(voo, new Date('2026-11-11T09:01:00Z'))).toBe(false);
+  });
+});
+
+describe('Formatação de datas (dd/mm/aaaa)', () => {
+  it('formata data local, data/hora UTC e mês/ano no padrão brasileiro', () => {
+    expect(formatarDataLocal('2026-11-25T15:30:00Z', 'America/Sao_Paulo')).toBe(
+      '25/11/2026'
+    );
+    expect(formatarDataHoraUtc('2026-11-25T15:30:00Z')).toBe('25/11/2026 15:30');
+    expect(formatarMesAno('2026-11')).toBe('11/2026');
+  });
+});
+
+describe('calcularMudancasImportacao (reimportação no meio do mês)', () => {
+  const agoraMeioMes = new Date('2026-11-12T00:00:00Z');
+  const antigos: EventoEscala[] = [
+    {
+      id: 'passado-1',
+      tipo: 'voo',
+      origem: 'GRU',
+      destino: 'GIG',
+      inicioUtc: '2026-11-05T12:00:00Z',
+      fimUtc: '2026-11-05T13:00:00Z',
+      numeroVoo: 'LA3366',
+      icao24: 'e48c55',
+    },
+    {
+      id: 'futuro-antigo',
+      tipo: 'voo',
+      origem: 'GRU',
+      destino: 'FOR',
+      inicioUtc: '2026-11-15T12:00:00Z',
+      fimUtc: '2026-11-15T15:00:00Z',
+      numeroVoo: 'LA3318',
+    },
+  ];
+  const novos: EventoEscala[] = [
+    {
+      id: 'futuro-novo',
+      tipo: 'voo',
+      origem: 'GRU',
+      destino: 'MAO',
+      inicioUtc: '2026-11-15T14:00:00Z',
+      fimUtc: '2026-11-15T18:00:00Z',
+      numeroVoo: 'LA3847',
+    },
+  ];
+
+  it('no modo atualizar-futuros preserva eventos passados e substitui apenas os futuros', () => {
+    const res = calcularMudancasImportacao(
+      antigos,
+      novos,
+      'atualizar-futuros',
+      agoraMeioMes
+    );
+    expect(res.passadosPreservados).toBe(1);
+    expect(res.futurosSubstituidos).toBe(1);
+    expect(res.idsParaRemover).toEqual(['futuro-antigo']);
+    expect(res.eventosFinais.map((e) => e.id)).toEqual([
+      'passado-1',
+      'futuro-novo',
+    ]);
+    // Preserva inclusive o icao24 já resolvido do voo passado
+    expect(res.eventosFinais[0]?.icao24).toBe('e48c55');
+  });
+
+  it('no modo substituir remove tudo do mês anterior e mantém apenas os novos', () => {
+    const res = calcularMudancasImportacao(
+      antigos,
+      novos,
+      'substituir',
+      agoraMeioMes
+    );
+    expect(res.idsParaRemover).toEqual(['passado-1', 'futuro-antigo']);
+    expect(res.eventosFinais.map((e) => e.id)).toEqual(['futuro-novo']);
   });
 });

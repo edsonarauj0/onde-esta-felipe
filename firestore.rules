@@ -28,5 +28,10 @@ service cloud.firestore {
     match /convites/{conviteId} {
       allow read, write: if isAdmin();
     }
+
+    // Histórico de importações de escala: somente admin
+    match /importacoes/{importacaoId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

@@ -347,19 +347,15 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
           </div>
         )}
 
-        {/* Aviso de privacidade */}
-        {config.modoPrivacidade && (
+        {/* Aviso quando há atraso de privacidade configurado */}
+        {config.atrasoPrivacidadeMinutos > 0 && (
           <>
             <Separator />
             <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <Shield className="w-3.5 h-3.5 text-sky-500 shrink-0" />
               <span>
-                Privacidade ativa: só mostramos a cidade (o hotel é segredo de
-                Estado 🔒)
-                {config.atrasoPrivacidadeMinutos > 0
-                  ? ` · atraso de ${config.atrasoPrivacidadeMinutos} min`
-                  : ''}
-                .
+                Atraso de privacidade ativo: posição exibida com{' '}
+                {config.atrasoPrivacidadeMinutos} min de diferença 🔒.
               </span>
             </div>
           </>
