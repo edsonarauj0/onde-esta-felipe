@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
 import {
   calcularMudancasImportacao,
   calcularResumoMes,
@@ -179,6 +180,15 @@ describe('Formatação de datas (dd/mm/aaaa)', () => {
     );
     expect(formatarDataHoraUtc('2026-11-25T15:30:00Z')).toBe('25/11/2026 15:30');
     expect(formatarMesAno('2026-11')).toBe('11/2026');
+  });
+
+  it('reconhece aeroportos regionais brasileiros com Cidade/UF', () => {
+    expect(formatarCidadeEstado(getAeroporto('OPS'))).toBe('Sinop/MT');
+    expect(formatarCidadeEstado(getAeroporto('XAP'))).toBe('Chapecó/SC');
+    expect(formatarCidadeEstado(getAeroporto('PFB'))).toBe('Passo Fundo/RS');
+    expect(formatarCidadeEstado(getAeroporto('VDC'))).toBe('Vitória da Conquista/BA');
+    expect(formatarCidadeEstado(getAeroporto('MAB'))).toBe('Marabá/PA');
+    expect(formatarCidadeEstado(getAeroporto('JDO'))).toBe('Juazeiro do Norte/CE');
   });
 });
 
