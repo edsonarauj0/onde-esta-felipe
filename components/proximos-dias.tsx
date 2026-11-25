@@ -55,7 +55,7 @@ export function ProximosDias({ eventos, baseIata = 'GRU' }: ProximosDiasProps) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-sky-500" />
-          Próximas aventuras do homi
+          Próximas destinos
         </CardTitle>
       </CardHeader>
       <CardContent>

@@ -13,11 +13,11 @@ interface CaricaturaProps {
 
 const LABELS: Record<EstadoStatus, string> = {
   voo: 'Voando alto ✈️',
-  pernoite: 'Mimir fora 🌙',
-  folga: 'De boa na lagoa 🌴',
+  pernoite: 'Dormindo fora 🌙',
+  folga: 'De folga 🌴',
   sobreaviso: 'De mala pronta 📞',
   treinamento: 'Piloto de simulador 🎮',
-  'sem-escala': 'Sumiu do mapa 🤷',
+  'sem-escala': 'Sem escala 🤷',
 };
 
 /**
