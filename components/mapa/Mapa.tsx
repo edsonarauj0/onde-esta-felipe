@@ -14,6 +14,7 @@ import length from '@turf/length';
 import { Crosshair, LocateFixed, Maximize2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { formatarCidadeEstado } from '@/lib/airports';
 import type { PosicaoAoVivo, StatusFelipe } from '@/lib/types';
 import { Caricatura } from './Caricatura';
 
@@ -340,8 +341,8 @@ export default function Mapa({
           >
             <div className="flex flex-col items-center">
               <span className="w-3 h-3 rounded-full bg-sky-600 ring-4 ring-sky-500/30" />
-              <span className="mt-1 px-1.5 py-0.5 rounded bg-white/90 dark:bg-slate-900/90 text-[10px] font-bold tracking-wider text-slate-800 dark:text-slate-100 shadow border border-slate-200 dark:border-slate-700">
-                {status.origemAeroporto.iata}
+              <span className="mt-1 px-1.5 py-0.5 rounded bg-white/95 dark:bg-slate-900/95 text-[10px] font-bold tracking-wide text-slate-800 dark:text-slate-100 shadow border border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                {status.origemAeroporto.iata} · {formatarCidadeEstado(status.origemAeroporto)}
               </span>
             </div>
           </Marker>
@@ -356,8 +357,8 @@ export default function Mapa({
           >
             <div className="flex flex-col items-center">
               <span className="w-3 h-3 rounded-full bg-emerald-600 ring-4 ring-emerald-500/30" />
-              <span className="mt-1 px-1.5 py-0.5 rounded bg-white/90 dark:bg-slate-900/90 text-[10px] font-bold tracking-wider text-slate-800 dark:text-slate-100 shadow border border-slate-200 dark:border-slate-700">
-                {status.destinoAeroporto.iata}
+              <span className="mt-1 px-1.5 py-0.5 rounded bg-white/95 dark:bg-slate-900/95 text-[10px] font-bold tracking-wide text-slate-800 dark:text-slate-100 shadow border border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                {status.destinoAeroporto.iata} · {formatarCidadeEstado(status.destinoAeroporto)}
               </span>
             </div>
           </Marker>

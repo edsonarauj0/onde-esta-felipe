@@ -14,7 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { getAeroporto } from '@/lib/airports';
+import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
 import {
   formatarDataLocal,
   formatarHoraLocal,
@@ -155,7 +155,7 @@ export function ProximosDias({
                                   : ''
                               }${
                                 destino || origem
-                                  ? ` · ${(destino ?? origem)!.cidade}`
+                                  ? ` · ${formatarCidadeEstado(destino ?? origem)}`
                                   : ''
                               }`}
                         </span>
@@ -176,11 +176,19 @@ export function ProximosDias({
                           </Badge>
                         )}
                       </div>
+                      {ev.tipo === 'voo' && (origem || destino) && (
+                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-0.5">
+                          {origem ? formatarCidadeEstado(origem) : ev.origem ?? '---'} →{' '}
+                          {destino ? formatarCidadeEstado(destino) : ev.destino ?? '---'}
+                        </div>
+                      )}
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         {formatarDataLocal(inicio.toISOString(), tzInicio)} ·{' '}
                         {formatarHoraLocal(inicio.toISOString(), tzInicio)} –{' '}
                         {formatarHoraLocal(fim.toISOString(), tzFim)}
-                        {ev.tipo === 'voo' && destino ? ` (${destino.iata})` : ''}
+                        {ev.tipo === 'voo' && destino
+                          ? ` (${destino.iata} · ${formatarCidadeEstado(destino)})`
+                          : ''}
                       </div>
                     </div>
                   </div>

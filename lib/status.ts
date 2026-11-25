@@ -5,7 +5,12 @@ import { lineString, point } from '@turf/helpers';
 import length from '@turf/length';
 import { formatInTimeZone } from 'date-fns-tz';
 import { ptBR } from 'date-fns/locale';
-import { AEROPORTO_PADRAO, CASA_FELIPE, getAeroporto } from './airports';
+import {
+  AEROPORTO_PADRAO,
+  CASA_FELIPE,
+  formatarCidadeEstado,
+  getAeroporto,
+} from './airports';
 import type {
   Aeroporto,
   ConfiguracoesApp,
@@ -508,7 +513,7 @@ export function calcularResumoMes(eventos: EventoEscala[]): ResumoMes {
       if (origem && destino) {
         const { rota } = calcularPosicaoNoArco(origem, destino, 0.5);
         distanciaTotalKm += rota.distanciaTotalKm;
-        cidadesSet.add(`${destino.cidade} (${destino.iata})`);
+        cidadesSet.add(`${formatarCidadeEstado(destino)} (${destino.iata})`);
       }
       const durH =
         (new Date(ev.fimUtc).getTime() - new Date(ev.inicioUtc).getTime()) /
@@ -517,7 +522,7 @@ export function calcularResumoMes(eventos: EventoEscala[]): ResumoMes {
     } else if (ev.tipo === 'pernoite') {
       totalPernoites++;
       const ap = getAeroporto(ev.destino ?? ev.origem);
-      if (ap) cidadesSet.add(`${ap.cidade} (${ap.iata})`);
+      if (ap) cidadesSet.add(`${formatarCidadeEstado(ap)} (${ap.iata})`);
     } else if (ev.tipo === 'folga') {
       totalFolgas++;
     }

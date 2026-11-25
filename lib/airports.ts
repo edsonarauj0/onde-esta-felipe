@@ -22,11 +22,32 @@ export const CASA_FELIPE: Aeroporto = {
   icao: 'CASA',
   nome: 'Em casa · São Vicente',
   cidade: 'São Vicente',
+  estado: 'SP',
   pais: 'Brasil',
   lat: -23.961,
   lng: -46.3946,
   tz: 'America/Sao_Paulo',
 };
+
+/**
+ * Formata "Cidade/UF" (ex.: "Vitória/ES", "Guarulhos/SP", "Lisboa/PT").
+ */
+export function formatarCidadeEstado(aeroporto?: Aeroporto | null): string {
+  if (!aeroporto) return '';
+  return aeroporto.estado
+    ? `${aeroporto.cidade}/${aeroporto.estado}`
+    : aeroporto.cidade;
+}
+
+/**
+ * Formata sigla + cidade/estado (ex.: "VIX · Vitória/ES").
+ */
+export function formatarSiglaLocal(codigo?: string | null): string {
+  if (!codigo) return '---';
+  const ap = getAeroporto(codigo);
+  if (!ap) return codigo.toUpperCase();
+  return `${ap.iata} (${formatarCidadeEstado(ap)})`;
+}
 
 export function getAeroporto(codigo?: string | null): Aeroporto | null {
   if (!codigo) return null;

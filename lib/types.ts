@@ -28,6 +28,7 @@ export type Aeroporto = {
   icao: string;
   nome: string;
   cidade: string;
+  estado?: string; // UF no Brasil (ex.: "SP", "ES", "PA") ou sigla do país no exterior (ex.: "PT", "EUA")
   pais: string;
   lat: number;
   lng: number;

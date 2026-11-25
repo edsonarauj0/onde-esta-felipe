@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { formatarCidadeEstado } from '@/lib/airports';
 import {
   formatarDataLocal,
   formatarDuracao,
@@ -160,8 +161,8 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
                   <div className="text-xl sm:text-2xl font-bold tracking-tight">
                     {status.origemAeroporto.iata}
                   </div>
-                  <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate max-w-[95px] sm:max-w-none">
-                    {status.origemAeroporto.cidade}
+                  <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate max-w-[115px] sm:max-w-none">
+                    {formatarCidadeEstado(status.origemAeroporto)}
                   </div>
                   <div className="mt-1 text-xs sm:text-sm font-semibold">
                     {formatarHoraLocal(
@@ -189,8 +190,8 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
                   <div className="text-xl sm:text-2xl font-bold tracking-tight">
                     {status.destinoAeroporto.iata}
                   </div>
-                  <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate max-w-[95px] sm:max-w-none ml-auto">
-                    {status.destinoAeroporto.cidade}
+                  <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate max-w-[115px] sm:max-w-none ml-auto">
+                    {formatarCidadeEstado(status.destinoAeroporto)}
                   </div>
                   <div className="mt-1 text-xs sm:text-sm font-semibold">
                     {formatarHoraLocal(
@@ -321,9 +322,7 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               <div className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-sky-500" />
                 <span className="font-semibold">
-                  {status.aeroportoAtual.iata === 'CASA'
-                    ? 'São Vicente, SP'
-                    : `${status.aeroportoAtual.cidade}, ${status.aeroportoAtual.pais}`}
+                  {formatarCidadeEstado(status.aeroportoAtual)}
                 </span>
               </div>
               <Badge variant="outline">

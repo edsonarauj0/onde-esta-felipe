@@ -71,6 +71,7 @@ import {
   salvarEventosDemo,
   salvarImportacaoDemo,
 } from '@/lib/local-store';
+import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
 import {
   calcularMudancasImportacao,
   CONFIG_PADRAO,
@@ -1348,6 +1349,14 @@ export function AdminDashboard() {
                               <div className="font-mono text-xs font-semibold">
                                 {ev?.origem || '—'} → {ev?.destino || '—'}
                               </div>
+                              {(ev?.origem || ev?.destino) && (
+                                <div className="text-[11px] text-slate-500">
+                                  {formatarCidadeEstado(getAeroporto(ev?.origem)) || ev?.origem || '—'}
+                                  {ev?.destino && ev.destino !== ev.origem
+                                    ? ` → ${formatarCidadeEstado(getAeroporto(ev?.destino)) || ev.destino}`
+                                    : ''}
+                                </div>
+                              )}
                               {ev?.numeroVoo && (
                                 <div className="text-xs text-slate-500">
                                   {ev.numeroVoo}
