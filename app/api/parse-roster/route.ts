@@ -172,6 +172,8 @@ export async function POST(request: Request) {
       importacao: publicacao?.importacao ?? null,
       passadosPreservados: publicacao?.passadosPreservados ?? 0,
       futurosSubstituidos: publicacao?.futurosSubstituidos ?? 0,
+      mesAtivado: publicacao?.mesAtivado ?? false,
+      mesAtivoAtual: publicacao?.mesAtivoAtual ?? null,
       pdfArquivadoStorage: storageInfo,
       caracteresExtraidos: textoExtraido.length,
     });

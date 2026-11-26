@@ -60,6 +60,8 @@ export async function POST(request: Request) {
       totalPublicado: result.totalPublicado,
       passadosPreservados: result.passadosPreservados,
       futurosSubstituidos: result.futurosSubstituidos,
+      mesAtivado: result.mesAtivado,
+      mesAtivoAtual: result.mesAtivoAtual,
       importacao: result.importacao,
     });
   } catch (err) {

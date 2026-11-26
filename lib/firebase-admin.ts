@@ -13,7 +13,11 @@ import type {
   ImportacaoHistorico,
   ModoPublicacao,
 } from './types';
-import { calcularMudancasImportacao, CONFIG_PADRAO } from './status';
+import {
+  calcularMudancasImportacao,
+  CONFIG_PADRAO,
+  getMesReferencia,
+} from './status';
 
 export function isFirebaseAdminConfigured(): boolean {
   return Boolean(
@@ -195,6 +199,8 @@ export async function publicarEscalaNoFirestore(params: {
   totalPublicado: number;
   passadosPreservados: number;
   futurosSubstituidos: number;
+  mesAtivado: boolean;
+  mesAtivoAtual: string | null;
   importacao: ImportacaoHistorico;
 }> {
   const {
@@ -209,9 +215,11 @@ export async function publicarEscalaNoFirestore(params: {
   } = params;
 
   const agora = new Date();
+  const mesAtual = getMesReferencia(agora);
   const totalVoos = eventos.filter((e) => e.tipo === 'voo' && !e.cancelado).length;
 
   if (!isFirebaseAdminConfigured()) {
+    const mesAtivadoDemo = ativarMes && mes <= mesAtual;
     const importacao: ImportacaoHistorico = {
       id: `imp-${Date.now()}`,
       criadoEm: agora.toISOString(),
@@ -231,6 +239,8 @@ export async function publicarEscalaNoFirestore(params: {
       totalPublicado: eventos.length,
       passadosPreservados: 0,
       futurosSubstituidos: 0,
+      mesAtivado: mesAtivadoDemo,
+      mesAtivoAtual: mesAtivadoDemo ? mes : mesAtual,
       importacao,
     };
   }
@@ -288,14 +298,41 @@ export async function publicarEscalaNoFirestore(params: {
     { merge: true }
   );
 
+  let mesAtivado = false;
+  let mesAtivoAtual: string | null = null;
   if (ativarMes) {
-    await db.doc('configuracoes/app').set(
-      {
-        mesAtivo: mes,
-        atualizadoEm: agora.toISOString(),
-      },
-      { merge: true }
-    );
+    let deveAtivar = true;
+    // Ao importar um mês futuro (ex.: 12/2026 ainda em 11/2026), não troca o mesAtivo
+    // se o mês atual já tiver escala publicada — evita esconder os eventos de hoje.
+    if (mes > mesAtual) {
+      const atualSnap = await db
+        .collection(`escalas/${mesAtual}/eventos`)
+        .limit(1)
+        .get();
+      if (!atualSnap.empty) {
+        deveAtivar = false;
+        mesAtivoAtual = mesAtual;
+        await db.doc('configuracoes/app').set(
+          {
+            mesAtivo: mesAtual,
+            atualizadoEm: agora.toISOString(),
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    if (deveAtivar) {
+      await db.doc('configuracoes/app').set(
+        {
+          mesAtivo: mes,
+          atualizadoEm: agora.toISOString(),
+        },
+        { merge: true }
+      );
+      mesAtivado = true;
+      mesAtivoAtual = mes;
+    }
   }
 
   // Registra entrada no histórico de importações
@@ -321,6 +358,8 @@ export async function publicarEscalaNoFirestore(params: {
     totalPublicado: eventosParaGravar.length,
     passadosPreservados,
     futurosSubstituidos,
+    mesAtivado,
+    mesAtivoAtual,
     importacao: { id: impDoc.id, ...registroSemId },
   };
 }

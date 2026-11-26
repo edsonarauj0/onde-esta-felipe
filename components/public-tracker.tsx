@@ -38,7 +38,7 @@ import {
 import {
   lerConfigDemo,
   lerConviteAceito,
-  lerEventosDemo,
+  lerEventosPorMesDemo,
   limparConviteAceito,
   salvarConviteAceito,
 } from '@/lib/local-store';
@@ -46,7 +46,11 @@ import {
   CONFIG_PADRAO,
   calcularResumoMes,
   estaNaJanelaOpenSky,
+  getMesesJanela,
+  getMesReferencia,
   getStatus,
+  mesclarEventosDeMeses,
+  selecionarMesResumo,
 } from '@/lib/status';
 import type {
   ConfiguracoesApp,
@@ -100,7 +104,10 @@ function parseDataHoraBrt(val: string): Date | null {
 export function PublicTracker() {
   const firebaseAtivo = isFirebaseClientConfigured();
 
-  const [eventos, setEventos] = useState<EventoEscala[]>([]);
+  const [eventosPorMes, setEventosPorMes] = useState<
+    Record<string, EventoEscala[]>
+  >({});
+  const [mesResumoManual, setMesResumoManual] = useState<string | null>(null);
   const [config, setConfig] = useState<ConfiguracoesApp>(CONFIG_PADRAO);
   const [configCarregada, setConfigCarregada] = useState(false);
   const [carregando, setCarregando] = useState(true);
@@ -212,7 +219,7 @@ export function PublicTracker() {
   useEffect(() => {
     if (!firebaseAtivo) {
       setConfig(lerConfigDemo());
-      setEventos(lerEventosDemo());
+      setEventosPorMes(lerEventosPorMesDemo());
       setConfigCarregada(true);
       setCarregando(false);
       return;
@@ -268,34 +275,83 @@ export function PublicTracker() {
   const acessoLiberado =
     !config.exigirConvite || conviteAutorizado || isAdminLogado;
 
+  const dataReferenciaJanela = useMemo(() => {
+    const simuladorAtivo = !firebaseAtivo || modoSimulador;
+    if (simuladorAtivo && cenarioDemo === 'data-manual') {
+      const parsed = parseDataHoraBrt(dataSimInput);
+      if (parsed) return parsed;
+    }
+    return agora;
+  }, [firebaseAtivo, modoSimulador, cenarioDemo, dataSimInput, agora]);
+
+  const mesesJanelaKey = useMemo(
+    () => getMesesJanela(dataReferenciaJanela, config.mesAtivo).join(','),
+    [dataReferenciaJanela, config.mesAtivo]
+  );
+
+  // Carrega a janela de meses (anterior, atual e próximo + mês ativo) para preservar o histórico de hoje
+  // e dar continuidade automática na virada do mês (ex.: novembro + dezembro juntos)
   useEffect(() => {
     if (!firebaseAtivo || !configCarregada || !authVerificado) return;
     if (!acessoLiberado) return;
     const db = getFirebaseDb();
     if (!db) return;
 
-    const q = query(
-      collection(db, 'escalas', config.mesAtivo, 'eventos'),
-      orderBy('inicioUtc', 'asc')
-    );
+    const mesesJanela = mesesJanelaKey.split(',').filter(Boolean);
+    if (mesesJanela.length === 0) return;
 
-    const unsubEventos = onSnapshot(
-      q,
-      (snap) => {
-        const lista: EventoEscala[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<EventoEscala, 'id'>),
-        }));
-        setEventos(lista);
-        setCarregando(false);
-      },
-      () => {
-        setCarregando(false);
+    setEventosPorMes((prev) => {
+      const filtrado: Record<string, EventoEscala[]> = {};
+      for (const m of mesesJanela) {
+        if (prev[m]) filtrado[m] = prev[m]!;
       }
-    );
+      return filtrado;
+    });
 
-    return () => unsubEventos();
-  }, [firebaseAtivo, configCarregada, authVerificado, acessoLiberado, config.mesAtivo]);
+    const carregados = new Set<string>();
+    const unsubs = mesesJanela.map((mes) => {
+      const q = query(
+        collection(db, 'escalas', mes, 'eventos'),
+        orderBy('inicioUtc', 'asc')
+      );
+
+      return onSnapshot(
+        q,
+        (snap) => {
+          const lista: EventoEscala[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<EventoEscala, 'id'>),
+          }));
+          setEventosPorMes((prev) => ({ ...prev, [mes]: lista }));
+          carregados.add(mes);
+          if (carregados.size >= mesesJanela.length) {
+            setCarregando(false);
+          }
+        },
+        () => {
+          carregados.add(mes);
+          if (carregados.size >= mesesJanela.length) {
+            setCarregando(false);
+          }
+        }
+      );
+    });
+
+    return () => {
+      for (const unsub of unsubs) unsub();
+    };
+  }, [
+    firebaseAtivo,
+    configCarregada,
+    authVerificado,
+    acessoLiberado,
+    mesesJanelaKey,
+  ]);
+
+  const { eventos, mesPorEventoId } = useMemo(
+    () => mesclarEventosDeMeses(eventosPorMes),
+    [eventosPorMes]
+  );
 
   // Atualiza posição estimada no arco a cada 30 segundos
   useEffect(() => {
@@ -376,10 +432,36 @@ export function PublicTracker() {
     [eventosAtivos, agoraSimulado, config]
   );
 
-  const resumoMes = useMemo(
-    () => calcularResumoMes(eventosAtivos),
-    [eventosAtivos]
+  const mesesDisponiveis = useMemo(
+    () =>
+      Object.entries(eventosPorMes)
+        .filter(([, lista]) => lista.length > 0)
+        .map(([mes]) => mes)
+        .sort(),
+    [eventosPorMes]
   );
+
+  const mesResumoPadrao = useMemo(
+    () => selecionarMesResumo(mesesDisponiveis, agoraSimulado, config.mesAtivo),
+    [mesesDisponiveis, agoraSimulado, config.mesAtivo]
+  );
+
+  useEffect(() => {
+    setMesResumoManual(null);
+  }, [mesResumoPadrao]);
+
+  const mesResumoExibido =
+    mesResumoManual && mesesDisponiveis.includes(mesResumoManual)
+      ? mesResumoManual
+      : mesResumoPadrao;
+
+  const resumoMes = useMemo(() => {
+    const simuladorAtivo = !firebaseAtivo || modoSimulador;
+    if (simuladorAtivo && cenarioDemo === 'vazio') {
+      return calcularResumoMes([]);
+    }
+    return calcularResumoMes(eventosPorMes[mesResumoExibido] ?? []);
+  }, [firebaseAtivo, modoSimulador, cenarioDemo, eventosPorMes, mesResumoExibido]);
 
   // Consulta /api/posicao/[id] a cada 60 segundos apenas quando há voo dentro da janela
   const consultarPosicaoAoVivo = useCallback(async () => {
@@ -418,7 +500,9 @@ export function PublicTracker() {
     }
 
     try {
-      const qs = new URLSearchParams({ mes: config.mesAtivo });
+      const mesDoEvento =
+        mesPorEventoId[ev.id] ?? getMesReferencia(new Date(ev.inicioUtc));
+      const qs = new URLSearchParams({ mes: mesDoEvento });
       if (!firebaseAtivo) {
         qs.set('inicioUtc', ev.inicioUtc);
         qs.set('fimUtc', ev.fimUtc);
@@ -447,7 +531,7 @@ export function PublicTracker() {
     status.coordenada,
     status.rumo,
     agoraSimulado,
-    config.mesAtivo,
+    mesPorEventoId,
   ]);
 
   useEffect(() => {
@@ -651,7 +735,9 @@ export function PublicTracker() {
               <div className="hidden lg:block">
                 <ResumoMesCard
                   resumo={resumoMes}
-                  mesAtivo={config.mesAtivo}
+                  mesAtivo={mesResumoExibido}
+                  mesesDisponiveis={mesesDisponiveis}
+                  onSelecionarMes={setMesResumoManual}
                 />
               </div>
             </div>
@@ -671,7 +757,9 @@ export function PublicTracker() {
               <div className="lg:hidden">
                 <ResumoMesCard
                   resumo={resumoMes}
-                  mesAtivo={config.mesAtivo}
+                  mesAtivo={mesResumoExibido}
+                  mesesDisponiveis={mesesDisponiveis}
+                  onSelecionarMes={setMesResumoManual}
                 />
               </div>
             </div>

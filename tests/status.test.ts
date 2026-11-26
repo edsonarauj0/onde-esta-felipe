@@ -3,11 +3,16 @@ import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
 import {
   calcularMudancasImportacao,
   calcularResumoMes,
+  deslocarMes,
   estaNaJanelaOpenSky,
   formatarDataHoraUtc,
   formatarDataLocal,
   formatarMesAno,
+  getMesesJanela,
+  getMesReferencia,
   getStatus,
+  mesclarEventosDeMeses,
+  selecionarMesResumo,
 } from '@/lib/status';
 import type { EventoEscala } from '@/lib/types';
 
@@ -254,5 +259,147 @@ describe('calcularMudancasImportacao (reimportação no meio do mês)', () => {
     );
     expect(res.idsParaRemover).toEqual(['passado-1', 'futuro-antigo']);
     expect(res.eventosFinais.map((e) => e.id)).toEqual(['futuro-novo']);
+  });
+});
+
+describe('Continuidade entre meses (importação antecipada do próximo mês)', () => {
+  it('calcula mês de referência em BRT e janela anterior/atual/próximo incluindo virada de ano', () => {
+    // 01/12 01:00 UTC ainda é 30/11 22:00 em São Paulo
+    expect(getMesReferencia(new Date('2026-12-01T01:00:00Z'))).toBe('2026-11');
+    expect(deslocarMes('2026-12', 1)).toBe('2027-01');
+    expect(deslocarMes('2026-01', -1)).toBe('2025-12');
+
+    // Mesmo com mesAtivo = 2026-12, em 26/11/2026 a janela inclui 2026-11 e 2026-12
+    expect(
+      getMesesJanela(new Date('2026-11-26T04:06:00Z'), '2026-12')
+    ).toEqual(['2026-10', '2026-11', '2026-12']);
+  });
+
+  it('mantém pernoite de hoje em Manaus e próximos voos de novembro ao importar dezembro', () => {
+    const eventosNov: EventoEscala[] = [
+      {
+        id: '2026-11-25-pernoite-mao-1',
+        tipo: 'pernoite',
+        origem: 'MAO',
+        destino: 'MAO',
+        inicioUtc: '2026-11-25T11:42:00Z',
+        fimUtc: '2026-11-26T06:05:00Z',
+      },
+      {
+        id: '2026-11-26-01-la3847',
+        tipo: 'voo',
+        origem: 'MAO',
+        destino: 'GRU',
+        inicioUtc: '2026-11-26T06:35:00Z',
+        fimUtc: '2026-11-26T10:40:00Z',
+        numeroVoo: 'LA3847',
+        icao24: 'e48c55',
+      },
+      {
+        id: '2026-11-30-01-asb',
+        tipo: 'sobreaviso',
+        codigoAtividade: 'ASB',
+        origem: 'GRU',
+        destino: 'GRU',
+        inicioUtc: '2026-11-30T18:50:00Z',
+        fimUtc: '2026-12-01T00:50:00Z',
+      },
+    ];
+
+    const eventosDez: EventoEscala[] = [
+      // Dia de fronteira 30/11 repetido no PDF de dezembro
+      {
+        id: '2026-11-30-01-asb',
+        tipo: 'sobreaviso',
+        codigoAtividade: 'ASB',
+        origem: 'GRU',
+        destino: 'GRU',
+        inicioUtc: '2026-11-30T18:50:00Z',
+        fimUtc: '2026-12-01T00:50:00Z',
+      },
+      {
+        id: '2026-12-01-01-hsb',
+        tipo: 'sobreaviso',
+        codigoAtividade: 'HSB',
+        origem: 'GRU',
+        destino: 'GRU',
+        inicioUtc: '2026-12-01T13:05:00Z',
+        fimUtc: '2026-12-01T23:00:00Z',
+      },
+    ];
+
+    const { eventos, mesPorEventoId } = mesclarEventosDeMeses({
+      '2026-11': eventosNov,
+      '2026-12': eventosDez,
+    });
+
+    // 30/11 não duplica: ficam 4 eventos únicos em ordem cronológica
+    expect(eventos.map((e) => e.id)).toEqual([
+      '2026-11-25-pernoite-mao-1',
+      '2026-11-26-01-la3847',
+      '2026-11-30-01-asb',
+      '2026-12-01-01-hsb',
+    ]);
+    expect(mesPorEventoId['2026-11-26-01-la3847']).toBe('2026-11');
+    expect(mesPorEventoId['2026-12-01-01-hsb']).toBe('2026-12');
+
+    // Em 26/11 01:06 BRT (04:06Z), Felipe segue de pernoite em Manaus
+    const statusHoje = getStatus(eventos, new Date('2026-11-26T04:06:00Z'));
+    expect(statusHoje.estado).toBe('pernoite');
+    expect(statusHoje.aeroportoAtual?.iata).toBe('MAO');
+    expect(statusHoje.proximoEvento?.id).toBe('2026-11-26-01-la3847');
+    expect(statusHoje.proximosEventos.map((e) => e.id)).toEqual([
+      '2026-11-26-01-la3847',
+      '2026-11-30-01-asb',
+      '2026-12-01-01-hsb',
+    ]);
+  });
+
+  it('substitui folga antiga no dia de fronteira se o próximo mês agendou atividade', () => {
+    const { eventos } = mesclarEventosDeMeses({
+      '2026-11': [
+        {
+          id: '2026-11-30-01-do',
+          tipo: 'folga',
+          codigoAtividade: 'DO',
+          origem: 'GRU',
+          destino: 'GRU',
+          inicioUtc: '2026-11-30T03:00:00Z',
+          fimUtc: '2026-12-01T02:59:00Z',
+        },
+      ],
+      '2026-12': [
+        {
+          id: '2026-11-30-01-asb',
+          tipo: 'sobreaviso',
+          codigoAtividade: 'ASB',
+          origem: 'GRU',
+          destino: 'GRU',
+          inicioUtc: '2026-11-30T18:50:00Z',
+          fimUtc: '2026-12-01T00:50:00Z',
+        },
+      ],
+    });
+
+    expect(eventos.map((e) => e.id)).toEqual(['2026-11-30-01-asb']);
+  });
+
+  it('prioriza o mês atual no resumo mensal mesmo se mesAtivo apontar para o próximo mês', () => {
+    expect(
+      selecionarMesResumo(
+        ['2026-11', '2026-12'],
+        new Date('2026-11-26T04:06:00Z'),
+        '2026-12'
+      )
+    ).toBe('2026-11');
+
+    // Quando vira dezembro, seleciona dezembro automaticamente
+    expect(
+      selecionarMesResumo(
+        ['2026-11', '2026-12'],
+        new Date('2026-12-01T04:00:00Z'),
+        '2026-11'
+      )
+    ).toBe('2026-12');
   });
 });

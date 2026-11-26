@@ -1,35 +1,85 @@
 'use client';
 
 import React from 'react';
-import { Clock, Globe2, MapPin, Plane } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Globe2,
+  MapPin,
+  Plane,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { formatarMesAno } from '@/lib/status';
 import type { ResumoMes } from '@/lib/types';
 
 interface ResumoMesCardProps {
   resumo: ResumoMes;
   mesAtivo: string;
+  mesesDisponiveis?: string[];
+  onSelecionarMes?: (mes: string) => void;
 }
 
-export function ResumoMesCard({ resumo, mesAtivo }: ResumoMesCardProps) {
+export function ResumoMesCard({
+  resumo,
+  mesAtivo,
+  mesesDisponiveis = [],
+  onSelecionarMes,
+}: ResumoMesCardProps) {
   const viagensPraiaGrande = Math.max(
     1,
     Math.round(resumo.distanciaTotalKm / 75)
   );
   const voltasNaTerra = (resumo.distanciaTotalKm / 40075).toFixed(2);
+  const idxAtual = mesesDisponiveis.indexOf(mesAtivo);
+  const podeNavegarMeses =
+    Boolean(onSelecionarMes) && mesesDisponiveis.length > 1 && idxAtual !== -1;
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2">
             <Globe2 className="w-4 h-4 text-sky-500" />
             Balanço da saudade no mês 💔
           </CardTitle>
-          <Badge variant="secondary" className="font-mono">
-            {formatarMesAno(mesAtivo)}
-          </Badge>
+          {podeNavegarMeses ? (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                disabled={idxAtual <= 0}
+                onClick={() => onSelecionarMes!(mesesDisponiveis[idxAtual - 1]!)}
+                aria-label="Mês anterior"
+                title="Ver mês anterior"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </Button>
+              <Badge variant="secondary" className="font-mono">
+                {formatarMesAno(mesAtivo)}
+              </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                disabled={idxAtual >= mesesDisponiveis.length - 1}
+                onClick={() => onSelecionarMes!(mesesDisponiveis[idxAtual + 1]!)}
+                aria-label="Próximo mês"
+                title="Ver próximo mês"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ) : (
+            <Badge variant="secondary" className="font-mono">
+              {formatarMesAno(mesAtivo)}
+            </Badge>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

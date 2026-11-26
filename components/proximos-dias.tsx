@@ -119,90 +119,107 @@ export function ProximosDias({
             domingo? 🍝
           </p>
         ) : (
-          <ul className="space-y-2.5">
-            {itensPagina.map((ev) => {
-              const origem = getAeroporto(ev.origem);
-              const destino = getAeroporto(ev.destino);
-              const tzInicio =
-                origem?.tz ?? destino?.tz ?? base?.tz ?? FUSO_PADRAO;
-              const tzFim =
-                destino?.tz ?? origem?.tz ?? base?.tz ?? FUSO_PADRAO;
-              const { inicio, fim } = getIntervaloEfetivo(ev);
-              const emAndamento =
-                agoraMs >= inicio.getTime() && agoraMs <= fim.getTime();
+          <div
+            className={
+              totalPaginas > 1
+                ? 'h-[472px] overflow-y-auto pr-0.5'
+                : undefined
+            }
+          >
+            <ul className="space-y-2.5">
+              {itensPagina.map((ev) => {
+                const origem = getAeroporto(ev.origem);
+                const destino = getAeroporto(ev.destino);
+                const tzInicio =
+                  origem?.tz ?? destino?.tz ?? base?.tz ?? FUSO_PADRAO;
+                const tzFim =
+                  destino?.tz ?? origem?.tz ?? base?.tz ?? FUSO_PADRAO;
+                const { inicio, fim } = getIntervaloEfetivo(ev);
+                const emAndamento =
+                  agoraMs >= inicio.getTime() && agoraMs <= fim.getTime();
+                const rotaCidades =
+                  ev.tipo === 'voo' && (origem || destino)
+                    ? `${origem ? formatarCidadeEstado(origem) : ev.origem ?? '---'} → ${destino ? formatarCidadeEstado(destino) : ev.destino ?? '---'}`
+                    : null;
+                const resumoHorario = `${formatarDataLocal(inicio.toISOString(), tzInicio)} · ${formatarHoraLocal(inicio.toISOString(), tzInicio)} – ${formatarHoraLocal(fim.toISOString(), tzFim)}${
+                  ev.tipo === 'voo' && destino
+                    ? ` (${destino.iata} · ${formatarCidadeEstado(destino)})`
+                    : ''
+                }`;
 
-              return (
-                <li
-                  key={ev.id}
-                  className={`flex items-start justify-between gap-3 rounded-xl border p-3 transition-colors ${
-                    emAndamento
-                      ? 'border-sky-300 dark:border-sky-700 bg-sky-50/70 dark:bg-sky-950/40'
-                      : 'border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40'
-                  }`}
-                >
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <div className="mt-0.5 p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700 shrink-0">
-                      <IconeTipo tipo={ev.tipo} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold text-sm">
-                          {ev.tipo === 'voo'
-                            ? `${ev.origem ?? '---'} → ${ev.destino ?? '---'}`
-                            : `${TIPO_LABEL[ev.tipo]}${
-                                ev.codigoAtividade
-                                  ? ` (${ev.codigoAtividade})`
-                                  : ''
-                              }${
-                                destino || origem
-                                  ? ` · ${formatarCidadeEstado(destino ?? origem)}`
-                                  : ''
-                              }`}
-                        </span>
-                        {ev.numeroVoo && (
-                          <Badge
-                            variant="outline"
-                            className="text-[10px] px-1.5 py-0 font-mono"
-                          >
-                            {ev.numeroVoo}
-                          </Badge>
-                        )}
-                        {emAndamento && (
-                          <Badge
-                            variant="live"
-                            className="text-[10px] px-1.5 py-0"
-                          >
-                            Agora
-                          </Badge>
-                        )}
+                return (
+                  <li
+                    key={ev.id}
+                    className={`flex items-start justify-between gap-3 rounded-xl border p-3 transition-colors ${
+                      emAndamento
+                        ? 'border-sky-300 dark:border-sky-700 bg-sky-50/70 dark:bg-sky-950/40'
+                        : 'border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                      <div className="mt-0.5 p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700 shrink-0">
+                        <IconeTipo tipo={ev.tipo} />
                       </div>
-                      {ev.tipo === 'voo' && (origem || destino) && (
-                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-0.5">
-                          {origem ? formatarCidadeEstado(origem) : ev.origem ?? '---'} →{' '}
-                          {destino ? formatarCidadeEstado(destino) : ev.destino ?? '---'}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-sm">
+                            {ev.tipo === 'voo'
+                              ? `${ev.origem ?? '---'} → ${ev.destino ?? '---'}`
+                              : `${TIPO_LABEL[ev.tipo]}${
+                                  ev.codigoAtividade
+                                    ? ` (${ev.codigoAtividade})`
+                                    : ''
+                                }${
+                                  destino || origem
+                                    ? ` · ${formatarCidadeEstado(destino ?? origem)}`
+                                    : ''
+                                }`}
+                          </span>
+                          {ev.numeroVoo && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] px-1.5 py-0 font-mono"
+                            >
+                              {ev.numeroVoo}
+                            </Badge>
+                          )}
+                          {emAndamento && (
+                            <Badge
+                              variant="live"
+                              className="text-[10px] px-1.5 py-0"
+                            >
+                              Agora
+                            </Badge>
+                          )}
                         </div>
-                      )}
-                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        {formatarDataLocal(inicio.toISOString(), tzInicio)} ·{' '}
-                        {formatarHoraLocal(inicio.toISOString(), tzInicio)} –{' '}
-                        {formatarHoraLocal(fim.toISOString(), tzFim)}
-                        {ev.tipo === 'voo' && destino
-                          ? ` (${destino.iata} · ${formatarCidadeEstado(destino)})`
-                          : ''}
+                        {rotaCidades && (
+                          <div
+                            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-0.5 truncate"
+                            title={rotaCidades}
+                          >
+                            {rotaCidades}
+                          </div>
+                        )}
+                        <div
+                          className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate"
+                          title={resumoHorario}
+                        >
+                          {resumoHorario}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {ev.atrasoMinutos ? (
-                    <Badge variant="destructive" className="text-[10px] shrink-0">
-                      {ev.atrasoMinutos > 0 ? '+' : ''}
-                      {ev.atrasoMinutos}m
-                    </Badge>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
+                    {ev.atrasoMinutos ? (
+                      <Badge variant="destructive" className="text-[10px] shrink-0">
+                        {ev.atrasoMinutos > 0 ? '+' : ''}
+                        {ev.atrasoMinutos}m
+                      </Badge>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
 
         {/* Setas de paginação (máximo 5 itens por página) */}

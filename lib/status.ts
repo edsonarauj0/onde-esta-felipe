@@ -21,10 +21,223 @@ import type {
   StatusFelipe,
 } from './types';
 
+export const FUSO_REFERENCIA_PADRAO = 'America/Sao_Paulo';
+
+export function getMesReferencia(
+  data: Date = new Date(),
+  timeZone = FUSO_REFERENCIA_PADRAO
+): string {
+  try {
+    return formatInTimeZone(data, timeZone, 'yyyy-MM');
+  } catch {
+    return data.toISOString().slice(0, 7);
+  }
+}
+
+export function deslocarMes(yyyyMm: string, deltaMeses: number): string {
+  const match = yyyyMm.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return yyyyMm;
+  const ano = Number(match[1]);
+  const mesIdx = Number(match[2]) - 1 + deltaMeses;
+  const dt = new Date(Date.UTC(ano, mesIdx, 1));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Retorna a janela de meses (anterior, atual e próximo em relação à data de referência,
+ * mais o mês ativo configurado se diferente) para garantir continuidade entre viradas de mês
+ * e impedir que a importação antecipada do mês seguinte oculte os eventos de hoje.
+ */
+export function getMesesJanela(
+  data: Date = new Date(),
+  mesAtivo?: string | null,
+  timeZone = FUSO_REFERENCIA_PADRAO
+): string[] {
+  const mesAtual = getMesReferencia(data, timeZone);
+  const set = new Set<string>([
+    deslocarMes(mesAtual, -1),
+    mesAtual,
+    deslocarMes(mesAtual, 1),
+  ]);
+  if (mesAtivo && /^\d{4}-\d{2}$/.test(mesAtivo)) {
+    set.add(mesAtivo);
+  }
+  return Array.from(set).sort();
+}
+
+function intervalosSobrepoem(a: EventoEscala, b: EventoEscala): boolean {
+  const intA = getIntervaloEfetivo(a);
+  const intB = getIntervaloEfetivo(b);
+  return (
+    intA.inicio.getTime() < intB.fim.getTime() &&
+    intB.inicio.getTime() < intA.fim.getTime()
+  );
+}
+
+function chaveSemanticaEvento(ev: EventoEscala): string {
+  return [
+    ev.tipo,
+    ev.inicioUtc,
+    ev.fimUtc,
+    ev.origem ?? '',
+    ev.destino ?? '',
+    ev.numeroVoo ?? '',
+    ev.codigoAtividade ?? '',
+  ].join('|');
+}
+
+function mesclarMetadadosEvento(
+  antigo: EventoEscala,
+  novo: EventoEscala
+): EventoEscala {
+  return {
+    ...novo,
+    icao24: novo.icao24 ?? antigo.icao24,
+    callsign: novo.callsign ?? antigo.callsign,
+  };
+}
+
+/**
+ * Mescla eventos de múltiplos meses em uma linha do tempo única e contínua,
+ * eliminando duplicidades em dias de fronteira (ex.: 30/11 presente nas escalas de 11/2026 e 12/2026).
+ * Em caso de conflito no dia de virada, prevalece a escala do mês mais recente, preservando `icao24`/`callsign`.
+ */
+export function mesclarEventosDeMeses(
+  eventosPorMes: Record<string, EventoEscala[]>
+): {
+  eventos: EventoEscala[];
+  mesPorEventoId: Record<string, string>;
+} {
+  const mesesOrdenados = Object.keys(eventosPorMes).sort();
+  const registros: Array<{ evento: EventoEscala; mes: string }> = [];
+
+  for (const mes of mesesOrdenados) {
+    const lista = eventosPorMes[mes] ?? [];
+    for (const ev of lista) {
+      const idxPorId = registros.findIndex((r) => r.evento.id === ev.id);
+      if (idxPorId !== -1) {
+        registros[idxPorId] = {
+          evento: mesclarMetadadosEvento(registros[idxPorId]!.evento, ev),
+          mes,
+        };
+        continue;
+      }
+
+      const chaveNova = chaveSemanticaEvento(ev);
+      const idxSemantico = registros.findIndex(
+        (r) => r.mes !== mes && chaveSemanticaEvento(r.evento) === chaveNova
+      );
+      if (idxSemantico !== -1) {
+        registros[idxSemantico] = {
+          evento: mesclarMetadadosEvento(registros[idxSemantico]!.evento, ev),
+          mes,
+        };
+        continue;
+      }
+
+      if (ev.tipo === 'pernoite') {
+        const localNovo = (ev.destino ?? ev.origem ?? '').toUpperCase();
+        const idxPernoiteSobreposto = registros.findIndex((r) => {
+          if (r.mes === mes || r.evento.tipo !== 'pernoite') return false;
+          const localExistente = (
+            r.evento.destino ??
+            r.evento.origem ??
+            ''
+          ).toUpperCase();
+          return (
+            localNovo !== '' &&
+            localNovo === localExistente &&
+            intervalosSobrepoem(r.evento, ev)
+          );
+        });
+        if (idxPernoiteSobreposto !== -1) {
+          registros[idxPernoiteSobreposto] = {
+            evento: mesclarMetadadosEvento(
+              registros[idxPernoiteSobreposto]!.evento,
+              ev
+            ),
+            mes,
+          };
+          continue;
+        }
+      }
+
+      // Se um mês mais recente agenda uma atividade real em cima de uma folga antiga no dia de fronteira,
+      // remove apenas a folga antiga sobreposta para não ocultar a atividade atualizada.
+      if (ev.tipo !== 'folga' && !ev.cancelado) {
+        for (let i = registros.length - 1; i >= 0; i--) {
+          const r = registros[i]!;
+          if (
+            r.mes !== mes &&
+            r.evento.tipo === 'folga' &&
+            intervalosSobrepoem(r.evento, ev)
+          ) {
+            registros.splice(i, 1);
+          }
+        }
+      }
+
+      registros.push({ evento: ev, mes });
+    }
+  }
+
+  registros.sort(
+    (a, b) =>
+      getIntervaloEfetivo(a.evento).inicio.getTime() -
+      getIntervaloEfetivo(b.evento).inicio.getTime()
+  );
+
+  const mesPorEventoId: Record<string, string> = {};
+  const eventos = registros.map((r) => {
+    mesPorEventoId[r.evento.id] = r.mes;
+    return r.evento;
+  });
+
+  return { eventos, mesPorEventoId };
+}
+
+function mesParaIndiceAbsoluto(yyyyMm: string): number {
+  const [ano, mes] = yyyyMm.split('-').map(Number);
+  return ano * 12 + (mes - 1);
+}
+
+/**
+ * Escolhe o mês padrão para o card "Balanço da saudade no mês":
+ * prioriza o mês real da data de referência (hoje) se houver eventos nele,
+ * depois o mesAtivo configurado, ou o mês disponível mais próximo.
+ */
+export function selecionarMesResumo(
+  mesesDisponiveis: string[],
+  data: Date = new Date(),
+  mesAtivo?: string | null,
+  timeZone = FUSO_REFERENCIA_PADRAO
+): string {
+  const mesAtual = getMesReferencia(data, timeZone);
+  const ordenados = Array.from(
+    new Set(mesesDisponiveis.filter((m) => /^\d{4}-\d{2}$/.test(m)))
+  ).sort();
+
+  if (ordenados.includes(mesAtual)) return mesAtual;
+  if (mesAtivo && ordenados.includes(mesAtivo)) return mesAtivo;
+  if (ordenados.length === 0) return mesAtual;
+
+  const alvoIdx = mesParaIndiceAbsoluto(mesAtual);
+  let melhor = ordenados[0]!;
+  let menorDist = Math.abs(mesParaIndiceAbsoluto(melhor) - alvoIdx);
+  for (const m of ordenados.slice(1)) {
+    const dist = Math.abs(mesParaIndiceAbsoluto(m) - alvoIdx);
+    if (dist < menorDist) {
+      menorDist = dist;
+      melhor = m;
+    }
+  }
+  return melhor;
+}
+
 export const CONFIG_PADRAO: ConfiguracoesApp = {
   nomePiloto: 'Felipe',
   baseIata: 'GRU',
-  mesAtivo: new Date().toISOString().slice(0, 7),
+  mesAtivo: getMesReferencia(),
   modoPrivacidade: true,
   atrasoPrivacidadeMinutos: 0,
   exigirConvite: false,

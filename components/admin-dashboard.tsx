@@ -65,10 +65,11 @@ import {
   lerConfigDemo,
   lerConvitesDemo,
   lerEventosDemo,
+  lerEventosMesDemo,
   lerImportacoesDemo,
   salvarConfigDemo,
   salvarConvitesDemo,
-  salvarEventosDemo,
+  salvarEventosMesDemo,
   salvarImportacaoDemo,
 } from '@/lib/local-store';
 import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
@@ -78,6 +79,7 @@ import {
   formatarDataHoraUtc,
   formatarHoraLocal,
   formatarMesAno,
+  getMesReferencia,
 } from '@/lib/status';
 import type {
   ConfiguracoesApp,
@@ -207,7 +209,7 @@ export function AdminDashboard() {
   // React Hook Form para a tela de revisão da escala
   const form = useForm<RevisaoFormValues>({
     defaultValues: {
-      mes: new Date().toISOString().slice(0, 7),
+      mes: getMesReferencia(),
       modo: 'atualizar-futuros',
       ativarMes: true,
       eventos: [],
@@ -381,6 +383,8 @@ export function AdminDashboard() {
         importacao?: ImportacaoHistorico | null;
         passadosPreservados?: number;
         futurosSubstituidos?: number;
+        mesAtivado?: boolean;
+        mesAtivoAtual?: string | null;
       };
 
       if (!res.ok) {
@@ -389,7 +393,11 @@ export function AdminDashboard() {
       }
 
       const eventosExtraidos = data.eventos ?? [];
-      if (data.mesReferencia) form.setValue('mes', data.mesReferencia);
+      const mesHoje = getMesReferencia();
+      if (data.mesReferencia) {
+        form.setValue('mes', data.mesReferencia);
+        form.setValue('ativarMes', data.mesReferencia <= mesHoje);
+      }
       setTripulanteDetectado(data.tripulante ?? null);
       setFormatoDetectado(data.formato ?? null);
       setEstatisticasParser(data.estatisticas ?? null);
@@ -400,13 +408,14 @@ export function AdminDashboard() {
       if (data.salvoNoFirebase) {
         if (data.demoPersist) {
           const modoAtual = form.getValues('modo');
+          const mesDestino = data.mesReferencia ?? form.getValues('mes');
           const { eventosFinais, passadosPreservados, futurosSubstituidos } =
             calcularMudancasImportacao(
-              lerEventosDemo(),
+              lerEventosMesDemo(mesDestino),
               eventosExtraidos,
               modoAtual
             );
-          salvarEventosDemo(eventosFinais);
+          salvarEventosMesDemo(mesDestino, eventosFinais);
           if (data.importacao) {
             const regDemo: ImportacaoHistorico = {
               ...data.importacao,
@@ -416,7 +425,9 @@ export function AdminDashboard() {
             };
             setImportacoes(salvarImportacaoDemo(regDemo));
           }
-          if (data.mesReferencia) {
+          const deveAtivarDemo =
+            mesDestino <= mesHoje || lerEventosMesDemo(mesHoje).length === 0;
+          if (data.mesReferencia && deveAtivarDemo) {
             const nextCfg = { ...config, mesAtivo: data.mesReferencia };
             setConfig(nextCfg);
             salvarConfigDemo(nextCfg);
@@ -429,8 +440,15 @@ export function AdminDashboard() {
           data.passadosPreservados && data.passadosPreservados > 0
             ? ` · ${data.passadosPreservados} passados preservados`
             : '';
+        const avisoMesAtual =
+          data.mesAtivado === false &&
+          data.mesAtivoAtual &&
+          data.mesReferencia &&
+          data.mesAtivoAtual !== data.mesReferencia
+            ? ` A escala de ${formatarMesAno(data.mesAtivoAtual)} continua ativa hoje.`
+            : '';
         toast.success(
-          `PDF processado e salvo no Firebase (${eventosExtraidos.length} eventos em ${formatarMesAno(data.mesReferencia)}${resumoPassado})!`
+          `PDF processado e salvo (${eventosExtraidos.length} eventos em ${formatarMesAno(data.mesReferencia)}${resumoPassado})!${avisoMesAtual}`
         );
       } else {
         toast.success(
@@ -497,6 +515,8 @@ export function AdminDashboard() {
         salvoNoFirebase?: boolean;
         demoPersist?: boolean;
         importacao?: ImportacaoHistorico | null;
+        mesAtivado?: boolean;
+        mesAtivoAtual?: string | null;
       };
 
       if (!res.ok) {
@@ -505,7 +525,11 @@ export function AdminDashboard() {
       }
 
       const eventosExtraidos = data.eventos ?? [];
-      if (data.mesReferencia) form.setValue('mes', data.mesReferencia);
+      const mesHoje = getMesReferencia();
+      if (data.mesReferencia) {
+        form.setValue('mes', data.mesReferencia);
+        form.setValue('ativarMes', data.mesReferencia <= mesHoje);
+      }
       setTripulanteDetectado(data.tripulante ?? null);
       setFormatoDetectado(data.formato ?? null);
       setEstatisticasParser(data.estatisticas ?? null);
@@ -516,13 +540,14 @@ export function AdminDashboard() {
       if (data.salvoNoFirebase) {
         if (data.demoPersist) {
           const modoAtual = form.getValues('modo');
+          const mesDestino = data.mesReferencia ?? form.getValues('mes');
           const { eventosFinais, passadosPreservados, futurosSubstituidos } =
             calcularMudancasImportacao(
-              lerEventosDemo(),
+              lerEventosMesDemo(mesDestino),
               eventosExtraidos,
               modoAtual
             );
-          salvarEventosDemo(eventosFinais);
+          salvarEventosMesDemo(mesDestino, eventosFinais);
           if (data.importacao) {
             setImportacoes(
               salvarImportacaoDemo({
@@ -533,7 +558,9 @@ export function AdminDashboard() {
               })
             );
           }
-          if (data.mesReferencia) {
+          const deveAtivarDemo =
+            mesDestino <= mesHoje || lerEventosMesDemo(mesHoje).length === 0;
+          if (data.mesReferencia && deveAtivarDemo) {
             const nextCfg = { ...config, mesAtivo: data.mesReferencia };
             setConfig(nextCfg);
             salvarConfigDemo(nextCfg);
@@ -541,8 +568,15 @@ export function AdminDashboard() {
         } else if (data.importacao) {
           setImportacoes((prev) => [data.importacao!, ...prev].slice(0, 30));
         }
+        const avisoMesAtual =
+          data.mesAtivado === false &&
+          data.mesAtivoAtual &&
+          data.mesReferencia &&
+          data.mesAtivoAtual !== data.mesReferencia
+            ? ` A escala de ${formatarMesAno(data.mesAtivoAtual)} continua ativa hoje.`
+            : '';
         toast.success(
-          `Escala processada e salva no Firebase (${eventosExtraidos.length} eventos)!`
+          `Escala processada e salva (${eventosExtraidos.length} eventos)!${avisoMesAtual}`
         );
       } else {
         toast.success(
@@ -583,6 +617,8 @@ export function AdminDashboard() {
         totalPublicado?: number;
         passadosPreservados?: number;
         futurosSubstituidos?: number;
+        mesAtivado?: boolean;
+        mesAtivoAtual?: string | null;
         importacao?: ImportacaoHistorico;
       };
 
@@ -592,13 +628,14 @@ export function AdminDashboard() {
       }
 
       if (data.demo) {
+        const mesHoje = getMesReferencia();
         const { eventosFinais, passadosPreservados, futurosSubstituidos } =
           calcularMudancasImportacao(
-            lerEventosDemo(),
+            lerEventosMesDemo(values.mes),
             values.eventos,
             values.modo
           );
-        salvarEventosDemo(eventosFinais);
+        salvarEventosMesDemo(values.mes, eventosFinais);
         if (data.importacao) {
           setImportacoes(
             salvarImportacaoDemo({
@@ -609,7 +646,10 @@ export function AdminDashboard() {
             })
           );
         }
-        if (values.ativarMes) {
+        const deveAtivarDemo =
+          values.ativarMes &&
+          (values.mes <= mesHoje || lerEventosMesDemo(mesHoje).length === 0);
+        if (deveAtivarDemo) {
           const nextCfg = { ...config, mesAtivo: values.mes };
           setConfig(nextCfg);
           salvarConfigDemo(nextCfg);
@@ -622,8 +662,14 @@ export function AdminDashboard() {
         data.passadosPreservados && data.passadosPreservados > 0
           ? ` (${data.passadosPreservados} passados preservados)`
           : '';
+      const avisoMesAtual =
+        data.mesAtivado === false &&
+        data.mesAtivoAtual &&
+        data.mesAtivoAtual !== values.mes
+          ? ` A escala de ${formatarMesAno(data.mesAtivoAtual)} continua ativa hoje e ${formatarMesAno(values.mes)} já aparece na sequência.`
+          : ' A família já pode ver.';
       toast.success(
-        `Escala ${formatarMesAno(values.mes)} publicada${detalhe}! A família já pode ver.`
+        `Escala ${formatarMesAno(values.mes)} publicada${detalhe}!${avisoMesAtual}`
       );
     } catch {
       toast.error('Falha ao publicar a escala.');
@@ -1284,7 +1330,7 @@ export function AdminDashboard() {
                       </option>
                     </select>
                   </div>
-                  <div className="flex items-end pb-1">
+                  <div className="flex flex-col justify-end pb-1 gap-1">
                     <label className="flex items-center gap-2 text-sm cursor-pointer">
                       <Switch
                         checked={form.watch('ativarMes')}
@@ -1292,6 +1338,12 @@ export function AdminDashboard() {
                       />
                       Tornar mês ativo no app
                     </label>
+                    {form.watch('mes') > getMesReferencia() && (
+                      <span className="text-[11px] text-slate-500 leading-tight">
+                        Mês futuro: a escala de {formatarMesAno(getMesReferencia())}{' '}
+                        continua ativa hoje e este mês já entra em Próximos destinos.
+                      </span>
+                    )}
                   </div>
                 </div>
 
