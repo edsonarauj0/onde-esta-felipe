@@ -302,4 +302,27 @@ describe('Processador Crewtopia PDF (escala real completa)', () => {
     expect(parsed.tripulante).toBe('FELIPE COSTA');
     expect(parsed.eventos).toHaveLength(53); // 27 voos + 9 sobreavisos + 11 folgas + 6 pernoites
   });
+
+  it('não infere pernoite quando há vários voos no mesmo dia mesmo com intervalo longo (>= 6h)', () => {
+    const escalaMesmoDia = `Crewtopia
+Tripulante: FELIPE COSTA
+Fri 27 Nov
+Apresentação: 05:30
+LA 3260 GRU 06:00 GYN 07:30
+LA 3267 GYN 14:05 GRU 15:55
+LA 3490 GRU 16:50 BPS 18:45
+Término da Jornada: 19:15
+Sat 28 Nov
+Apresentação: 07:30
+LA 3491 BPS 08:00 GRU 10:00
+Término da Jornada: 10:30`;
+
+    const res = parseCrewtopiaRoster(escalaMesmoDia, { anoReferencia: 2026 });
+    expect(res).not.toBeNull();
+    // Em GYN (07:30 -> 14:05 no mesmo dia 27/11) NÃO é pernoite;
+    // Em BPS (18:45 de 27/11 -> 08:00 de 28/11) É pernoite!
+    const pernoites = res!.eventos.filter((e) => e.tipo === 'pernoite');
+    expect(pernoites).toHaveLength(1);
+    expect(pernoites[0]!.destino).toBe('BPS');
+  });
 });

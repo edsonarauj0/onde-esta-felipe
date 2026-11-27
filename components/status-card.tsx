@@ -10,6 +10,7 @@ import {
   MapPin,
   Moon,
   Plane,
+  PlaneTakeoff,
   Radio,
   Shield,
   Sparkles,
@@ -19,13 +20,30 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { formatarCidadeEstado } from '@/lib/airports';
+import { formatarCidadeEstado, getAeroporto } from '@/lib/airports';
 import {
   formatarDataLocal,
   formatarDuracao,
   formatarHoraLocal,
+  getIntervaloEfetivo,
 } from '@/lib/status';
-import type { ConfiguracoesApp, PosicaoAoVivo, StatusFelipe } from '@/lib/types';
+import type {
+  ConfiguracoesApp,
+  EstadoStatus,
+  PosicaoAoVivo,
+  StatusFelipe,
+} from '@/lib/types';
+
+const ESTADO_BADGE_LABEL: Record<
+  Exclude<EstadoStatus, 'voo' | 'sem-escala'>,
+  string
+> = {
+  pernoite: 'Pernoite',
+  'em-solo': 'Em solo',
+  folga: 'Folga',
+  sobreaviso: 'Sobreaviso',
+  treinamento: 'Treinamento',
+};
 
 interface StatusCardProps {
   status: StatusFelipe;
@@ -43,22 +61,22 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-pink-500" />
-              Cadê a escala, {nome}?! 🤷‍♂️
+              <Sparkles className="w-5 h-5 text-slate-500" />
+              Sem escala cadastrada
             </CardTitle>
-            <Badge variant="secondary">Sumido</Badge>
+            <Badge variant="secondary">Sem escala</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            A família já tá mandando interrogação no grupo e nada da escala do
-            mês! Assim que o {nome} subir o PDF do Crewtopia no painel admin, o
-            radar da saudade volta ao ar.
+            Nenhuma escala ativa foi encontrada para o período atual. Assim que
+            o PDF da escala for importado no painel administrativo, o status e a
+            localização de {nome} serão exibidos aqui.
           </p>
           {status.aeroportoAtual && (
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               <MapPin className="w-3.5 h-3.5" />
-              Último paradeiro oficial (base): {status.aeroportoAtual.cidade} ({status.aeroportoAtual.iata})
+              Base cadastrada: {status.aeroportoAtual.cidade} ({status.aeroportoAtual.iata})
             </div>
           )}
         </CardContent>
@@ -66,20 +84,29 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
     );
   }
 
-  const fraseBregaStatus =
+  const descricaoStatus =
     status.estado === 'voo'
       ? status.progresso < 25
-        ? 'Acabou de decolar! Pode mandar áudio de 5 min no Zap que ele só ouve quando pousar 🎙️'
+        ? 'Voo recém-iniciado, em fase inicial de subida e navegação.'
         : status.progresso < 80
-          ? 'Lá em cima nas nuvens tomando cafezinho de bordo enquanto a família morre de saudade ☕💔'
-          : 'Já tá descendo a ladeira do céu! Vai esquentando o café que o comandante tá chegando 🛬'
+          ? 'Voo em andamento, seguindo a rota prevista na escala.'
+          : 'Voo em fase final de aproximação para o aeroporto de destino.'
       : status.estado === 'pernoite'
-        ? 'Descansando em outra cidade — não ligue agora que o homi precisa dormir 😴'
-        : status.estado === 'folga'
-          ? 'ALERTA DE EVENTO RARO! Aproveite para cobrar o churrasco antes que a escala vire 🥩🎉'
-          : status.estado === 'sobreaviso'
-            ? 'De mala pronta olhando pro teto... se o celular tocar, ele desaparece em 15 minutos 🧳📞'
-            : 'Voando no simulador: não sai do lugar, mas sai suando a camisa branca 🎮✈️';
+        ? 'Em descanso fora da base, com pernoite programado nesta localidade.'
+        : status.estado === 'em-solo'
+          ? 'Em solo entre etapas da programação do dia, aguardando a próxima decolagem.'
+          : status.estado === 'folga'
+            ? 'Em período de folga programada conforme a escala mensal.'
+            : status.estado === 'sobreaviso'
+              ? 'Em regime de sobreaviso, à disposição da companhia aérea em caso de acionamento.'
+              : 'Em atividade de treinamento em simulador prevista na escala.';
+
+  const proximoVooEmSolo =
+    status.estado === 'em-solo'
+      ? status.proximoEvento?.tipo === 'voo'
+        ? status.proximoEvento
+        : (status.proximosEventos.find((ev) => ev.tipo === 'voo') ?? null)
+      : null;
 
   return (
     <Card className="overflow-hidden">
@@ -92,6 +119,9 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
             {status.estado === 'pernoite' && (
               <Moon className="w-5 h-5 text-indigo-500" />
             )}
+            {status.estado === 'em-solo' && (
+              <PlaneTakeoff className="w-5 h-5 text-sky-500" />
+            )}
             {status.estado === 'folga' && (
               <Coffee className="w-5 h-5 text-emerald-500" />
             )}
@@ -102,28 +132,32 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               <GraduationCap className="w-5 h-5 text-violet-500" />
             )}
             <CardTitle>
-              {status.estado === 'voo' && `${nome} tá nas nuvens (de novo!) ✈️`}
+              {status.estado === 'voo' && `${nome} está em voo`}
               {status.estado === 'pernoite' &&
-                `${nome} tá de pernoite${
+                `${nome} está em pernoite${
                   status.aeroportoAtual ? ` em ${status.aeroportoAtual.cidade}` : ''
-                } 🌙`}
+                }`}
+              {status.estado === 'em-solo' &&
+                `${nome} está em solo${
+                  status.aeroportoAtual ? ` em ${status.aeroportoAtual.cidade}` : ''
+                }`}
               {status.estado === 'folga' &&
-                `MILAGRE! ${nome} tá ${
+                `${nome} está ${
                   status.aeroportoAtual?.iata === 'CASA'
-                    ? 'em casa (São Vicente)'
+                    ? 'de folga em casa (São Vicente)'
                     : `de folga${
                         status.aeroportoAtual
                           ? ` em ${status.aeroportoAtual.cidade}`
                           : ''
                       }`
-                } 🎉`}
+                }`}
               {status.estado === 'sobreaviso' &&
                 (status.aeroportoAtual?.iata === 'CASA'
-                  ? `${nome} tá de sobreaviso em casa (HSB) 📞`
-                  : `${nome} tá de reserva no aeroporto (${
+                  ? `${nome} está de sobreaviso em casa (HSB)`
+                  : `${nome} está de reserva no aeroporto (${
                       status.eventoAtual?.codigoAtividade || 'ASB'
-                    }) 📞`)}
-              {status.estado === 'treinamento' && `${nome} tá no simulador 🎮`}
+                    })`)}
+              {status.estado === 'treinamento' && `${nome} está em treinamento`}
             </CardTitle>
           </div>
 
@@ -137,16 +171,16 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               {isLive ? 'Ao vivo' : 'Posição estimada'}
             </Badge>
           ) : (
-            <Badge variant="secondary" className="capitalize">
-              {status.estado}
+            <Badge variant="secondary">
+              {ESTADO_BADGE_LABEL[status.estado]}
             </Badge>
           )}
         </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
-        <p className="text-xs italic text-pink-700 dark:text-pink-300 bg-pink-50/70 dark:bg-pink-950/30 border border-pink-200/70 dark:border-pink-900/50 rounded-xl px-3 py-2">
-          “{fraseBregaStatus}”
+        <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 rounded-xl px-3 py-2">
+          {descricaoStatus}
         </p>
 
         {/* Bloco detalhado de VOO */}
@@ -295,11 +329,11 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
                   <Radio className="w-4 h-4 mt-0.5 shrink-0" />
                   <div>
                     <AlertTitle className="text-xs">
-                      Sinal sumiu igual mensagem de ex — seguindo pela escala!
+                      Sem recepção ADS-B no momento
                     </AlertTitle>
                     <AlertDescription>
-                      Sem recepção ADS-B no momento (normal no oceano ou em
-                      áreas remotas). A caricatura segue a rota calculada.
+                      A posição exibida no mapa está sendo estimada
+                      automaticamente com base nos horários e na rota da escala.
                     </AlertDescription>
                   </div>
                 </Alert>
@@ -327,7 +361,7 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               </div>
               <Badge variant="outline">
                 {status.aeroportoAtual.iata === 'CASA'
-                  ? '🏠 Em casa'
+                  ? 'Em casa'
                   : status.aeroportoAtual.iata}
               </Badge>
             </div>
@@ -344,6 +378,34 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
                 </strong>
               </span>
             </div>
+
+            {proximoVooEmSolo &&
+              (() => {
+                const inicioProx = getIntervaloEfetivo(proximoVooEmSolo).inicio;
+                const tzProx =
+                  getAeroporto(proximoVooEmSolo.origem)?.tz ??
+                  status.aeroportoAtual.tz;
+                const faltaMs =
+                  inicioProx.getTime() -
+                  new Date(status.referenciaAgoraUtc).getTime();
+                return (
+                  <div className="flex items-center gap-2 text-xs text-sky-700 dark:text-sky-300 pt-0.5">
+                    <Plane className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Próximo voo:{' '}
+                      <strong className="font-mono">
+                        {proximoVooEmSolo.numeroVoo || 'Voo'}
+                      </strong>{' '}
+                      ({proximoVooEmSolo.origem ?? '---'} →{' '}
+                      {proximoVooEmSolo.destino ?? '---'}) às{' '}
+                      <strong>
+                        {formatarHoraLocal(inicioProx.toISOString(), tzProx)}
+                      </strong>
+                      {faltaMs > 0 ? ` · em ${formatarDuracao(faltaMs)}` : ''}
+                    </span>
+                  </div>
+                );
+              })()}
 
             {status.fimEfetivoUtc && (
               <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -371,7 +433,7 @@ export function StatusCard({ status, posicaoAoVivo, config }: StatusCardProps) {
               <Shield className="w-3.5 h-3.5 text-sky-500 shrink-0" />
               <span>
                 Atraso de privacidade ativo: posição exibida com{' '}
-                {config.atrasoPrivacidadeMinutos} min de diferença 🔒.
+                {config.atrasoPrivacidadeMinutos} min de diferença.
               </span>
             </div>
           </>

@@ -14,6 +14,7 @@ import {
 import type {
   Aeroporto,
   ConfiguracoesApp,
+  EstadoStatus,
   EventoEscala,
   ModoPublicacao,
   ResumoMes,
@@ -366,6 +367,21 @@ export function calcularPosicaoNoArco(
 }
 
 /**
+ * Um pernoite inferido automaticamente só é válido se realmente virar a noite no destino
+ * (início e fim em dias locais diferentes). Pernoites inferidos no mesmo dia (ex.: intervalo
+ * entre voos no mesmo dia) não são pernoites reais.
+ */
+export function isPernoiteValido(evento: EventoEscala): boolean {
+  if (evento.tipo !== 'pernoite' || !evento.inferido) return true;
+  const ap = getAeroporto(evento.destino ?? evento.origem);
+  const tz = ap?.tz ?? FUSO_REFERENCIA_PADRAO;
+  const { inicio, fim } = getIntervaloEfetivo(evento);
+  const diaInicio = formatarHoraLocal(inicio.toISOString(), tz, 'yyyy-MM-dd');
+  const diaFim = formatarHoraLocal(fim.toISOString(), tz, 'yyyy-MM-dd');
+  return diaInicio !== diaFim;
+}
+
+/**
  * Encontra o último aeroporto conhecido antes de um instante (útil em folgas/pernoites sem origem explícita).
  */
 function inferirAeroportoAtual(
@@ -374,14 +390,37 @@ function inferirAeroportoAtual(
   base: Aeroporto
 ): Aeroporto {
   let ultimoDestino: Aeroporto | null = null;
+  let ultimoFimMs = -Infinity;
   for (const ev of eventosAtivos) {
     const { fim } = getIntervaloEfetivo(ev);
-    if (fim.getTime() <= agoraMs) {
+    const fimMs = fim.getTime();
+    if (fimMs <= agoraMs && fimMs >= ultimoFimMs) {
       const dest = getAeroporto(ev.destino ?? ev.origem);
-      if (dest) ultimoDestino = dest;
+      if (dest) {
+        ultimoDestino = dest;
+        ultimoFimMs = fimMs;
+      }
     }
   }
   return ultimoDestino ?? base;
+}
+
+function inferirUltimoVooConcluido(
+  eventosAtivos: EventoEscala[],
+  agoraMs: number
+): EventoEscala | null {
+  let ultimo: EventoEscala | null = null;
+  let ultimoFimMs = -Infinity;
+  for (const ev of eventosAtivos) {
+    if (ev.tipo !== 'voo') continue;
+    const { fim } = getIntervaloEfetivo(ev);
+    const fimMs = fim.getTime();
+    if (fimMs <= agoraMs && fimMs >= ultimoFimMs) {
+      ultimo = ev;
+      ultimoFimMs = fimMs;
+    }
+  }
+  return ultimo;
 }
 
 function isAeroportoDaBase(iata: string | undefined, baseIata: string): boolean {
@@ -416,7 +455,7 @@ export function getStatus(
   const agoraMs = agoraEfetivo.getTime();
 
   const eventosValidos = [...eventos]
-    .filter((e) => !e.cancelado)
+    .filter((e) => !e.cancelado && isPernoiteValido(e))
     .sort(
       (a, b) =>
         getIntervaloEfetivo(a).inicio.getTime() -
@@ -461,11 +500,65 @@ export function getStatus(
   const proximoEvento = proximosEventos[0] ?? null;
 
   if (!eventoAtual) {
-    // Entre eventos: se o último destino foi fora da base -> pernoite; se na base -> em casa (São Vicente)
+    // Entre eventos: só é pernoite fora da base quando Felipe realmente vai dormir naquele destino hoje
+    // (sem outro voo saindo no mesmo dia local e com intervalo compatível com pernoite).
+    // Entre voos no mesmo dia (conexão/escala), fica em solo aguardando o próximo voo.
     const ultimoAeroporto = inferirAeroportoAtual(eventosValidos, agoraMs, base);
     const naBase = isAeroportoDaBase(ultimoAeroporto.iata, base.iata);
-    const estadoImplicito = naBase ? 'folga' : 'pernoite';
-    const localAtual = naBase ? CASA_FELIPE : ultimoAeroporto;
+    const ultimoVoo = inferirUltimoVooConcluido(eventosValidos, agoraMs);
+    const proximoVoo = proximosEventos.find((ev) => ev.tipo === 'voo') ?? null;
+
+    const tzLocal = ultimoAeroporto.tz || FUSO_REFERENCIA_PADRAO;
+    const diaAgoraLocal = formatarHoraLocal(
+      agoraEfetivo.toISOString(),
+      tzLocal,
+      'yyyy-MM-dd'
+    );
+    const diaProxVooLocal = proximoVoo
+      ? formatarHoraLocal(
+          getIntervaloEfetivo(proximoVoo).inicio.toISOString(),
+          tzLocal,
+          'yyyy-MM-dd'
+        )
+      : null;
+    const diaUltimoVooLocal = ultimoVoo
+      ? formatarHoraLocal(
+          getIntervaloEfetivo(ultimoVoo).fim.toISOString(),
+          tzLocal,
+          'yyyy-MM-dd'
+        )
+      : null;
+    const gapEntreVoosHoras =
+      ultimoVoo && proximoVoo
+        ? (getIntervaloEfetivo(proximoVoo).inicio.getTime() -
+            getIntervaloEfetivo(ultimoVoo).fim.getTime()) /
+          3_600_000
+        : null;
+
+    let estadoImplicito: EstadoStatus;
+    let localAtual: Aeroporto;
+
+    if (naBase) {
+      const emConexaoNaBase =
+        ultimoVoo !== null &&
+        proximoVoo !== null &&
+        diaUltimoVooLocal === diaAgoraLocal &&
+        diaProxVooLocal === diaAgoraLocal &&
+        gapEntreVoosHoras !== null &&
+        gapEntreVoosHoras < 6;
+
+      estadoImplicito = emConexaoNaBase ? 'em-solo' : 'folga';
+      localAtual = emConexaoNaBase ? ultimoAeroporto : CASA_FELIPE;
+    } else {
+      const vaiDormirNoDestino =
+        !proximoVoo ||
+        (diaProxVooLocal !== null &&
+          diaProxVooLocal > diaAgoraLocal &&
+          (gapEntreVoosHoras === null || gapEntreVoosHoras >= 6));
+
+      estadoImplicito = vaiDormirNoDestino ? 'pernoite' : 'em-solo';
+      localAtual = ultimoAeroporto;
+    }
 
     return {
       estado: estadoImplicito,
@@ -710,7 +803,7 @@ export function formatarDuracao(ms: number | null): string {
 }
 
 export function calcularResumoMes(eventos: EventoEscala[]): ResumoMes {
-  const validos = eventos.filter((e) => !e.cancelado);
+  const validos = eventos.filter((e) => !e.cancelado && isPernoiteValido(e));
   let totalVoos = 0;
   let totalPernoites = 0;
   let totalFolgas = 0;

@@ -100,7 +100,7 @@ Regras obrigatórias:
 4. Códigos de aeroporto devem ser IATA de 3 letras maiúsculas (ex.: GRU, CGH, GIG, VIX, BEL).
 5. Mapeamento de atividades comuns:
    - Voos comerciais / etapas (LA, G3, AD, JJ, etc.) -> tipo: "voo"
-   - Layover / pernoite fora da base -> tipo: "pernoite" (NUNCA inclua nome de hotel!)
+   - Pernoite fora da base (APENAS quando o piloto vai dormir/passar a noite naquele destino; NÃO criar pernoite para conexões ou intervalos entre voos no mesmo dia) -> tipo: "pernoite" (NUNCA inclua nome de hotel!)
    - Folga / OFF / DO / DR / FR -> tipo: "folga"
    - Sobreaviso / SBY / ASB / HSB / RES -> tipo: "sobreaviso"
    - Simulador / SIM / Ground School / CRM / Treinamento -> tipo: "treinamento"

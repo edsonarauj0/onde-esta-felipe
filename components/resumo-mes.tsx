@@ -28,10 +28,6 @@ export function ResumoMesCard({
   mesesDisponiveis = [],
   onSelecionarMes,
 }: ResumoMesCardProps) {
-  const viagensPraiaGrande = Math.max(
-    1,
-    Math.round(resumo.distanciaTotalKm / 75)
-  );
   const voltasNaTerra = (resumo.distanciaTotalKm / 40075).toFixed(2);
   const idxAtual = mesesDisponiveis.indexOf(mesAtivo);
   const podeNavegarMeses =
@@ -43,7 +39,7 @@ export function ResumoMesCard({
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2">
             <Globe2 className="w-4 h-4 text-sky-500" />
-            Balanço da saudade no mês 💔
+            Resumo do mês
           </CardTitle>
           {podeNavegarMeses ? (
             <div className="flex items-center gap-1">
@@ -108,10 +104,12 @@ export function ResumoMesCard({
         </div>
 
         {resumo.distanciaTotalKm > 0 && (
-          <p className="text-xs text-slate-600 dark:text-slate-300 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 rounded-xl px-3 py-2">
-            🧮 Isso dá <strong>{voltasNaTerra} voltas na Terra</strong> (ou{' '}
-            <strong>{viagensPraiaGrande} descidas</strong> pra Praia Grande sem
-            pegar trânsito na Imigrantes!).
+          <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 rounded-xl px-3 py-2">
+            Distância equivalente a <strong>{voltasNaTerra} voltas na Terra</strong>{' '}
+            ({resumo.totalPernoites}{' '}
+            {resumo.totalPernoites === 1 ? 'pernoite' : 'pernoites'} e{' '}
+            {resumo.totalFolgas}{' '}
+            {resumo.totalFolgas === 1 ? 'folga' : 'folgas'} na escala).
           </p>
         )}
 

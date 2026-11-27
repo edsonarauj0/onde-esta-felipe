@@ -72,6 +72,7 @@ type CenarioDemo =
   | 'tempo-real'
   | 'voo-estimado'
   | 'ao-vivo-sim'
+  | 'em-solo'
   | 'pernoite'
   | 'folga'
   | 'sobreaviso'
@@ -377,6 +378,44 @@ export function PublicTracker() {
       return { eventosAtivos: eventos, agoraSimulado: parsed ?? agora };
     }
 
+    if (cenarioDemo === 'em-solo') {
+      const voosReais = eventos.filter((e) => !e.cancelado && e.tipo === 'voo');
+      for (let i = 0; i < voosReais.length - 1; i++) {
+        const v1 = voosReais[i]!;
+        const v2 = voosReais[i + 1]!;
+        const fim1 = new Date(v1.fimUtc).getTime();
+        const ini2 = new Date(v2.inicioUtc).getTime();
+        const gapHoras = (ini2 - fim1) / 3_600_000;
+        if (gapHoras > 0.25 && gapHoras < 6) {
+          const meio = new Date(fim1 + Math.round((ini2 - fim1) * 0.5));
+          return { eventosAtivos: eventos, agoraSimulado: meio };
+        }
+      }
+
+      const vooAnteriorSim: EventoEscala = {
+        id: 'sim-em-solo-anterior',
+        tipo: 'voo',
+        origem: config.baseIata || 'GRU',
+        destino: 'GYN',
+        inicioUtc: new Date(agora.getTime() - 2 * 3_600_000).toISOString(),
+        fimUtc: new Date(agora.getTime() - 30 * 60_000).toISOString(),
+        numeroVoo: 'LA3266',
+      };
+      const vooProximoSim: EventoEscala = {
+        id: 'sim-em-solo-proximo',
+        tipo: 'voo',
+        origem: 'GYN',
+        destino: config.baseIata || 'GRU',
+        inicioUtc: new Date(agora.getTime() + 45 * 60_000).toISOString(),
+        fimUtc: new Date(agora.getTime() + 2.5 * 3_600_000).toISOString(),
+        numeroVoo: 'LA3267',
+      };
+      return {
+        eventosAtivos: [vooAnteriorSim, vooProximoSim],
+        agoraSimulado: agora,
+      };
+    }
+
     const tipoAlvo: EventoEscala['tipo'] =
       cenarioDemo === 'voo-estimado' || cenarioDemo === 'ao-vivo-sim'
         ? 'voo'
@@ -580,10 +619,10 @@ export function PublicTracker() {
             </div>
             <div className="min-w-0">
               <h1 className="font-bold text-sm sm:text-lg leading-tight truncate">
-                Onde está o {config.nomePiloto}? ✈️
+                Onde está o {config.nomePiloto}?
               </h1>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block truncate">
-                Radar oficial da família · Porque no Zap ele só visualiza quando pousa
+                Acompanhamento de escala e localização em tempo real
               </p>
             </div>
           </div>
@@ -673,6 +712,7 @@ export function PublicTracker() {
                     ['sobreaviso', 'Sobreaviso'],
                     ['voo-estimado', 'Voo (Estimado)'],
                     ['ao-vivo-sim', 'Voo (Ao vivo)'],
+                    ['em-solo', 'Em solo'],
                     ['pernoite', 'Pernoite'],
                     ['treinamento', 'Simulador'],
                     ['vazio', 'Sem escala'],

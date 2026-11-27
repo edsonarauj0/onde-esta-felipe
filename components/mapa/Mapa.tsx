@@ -408,8 +408,8 @@ export default function Mapa({
           className="h-8 px-2.5 sm:px-3 text-xs bg-white/95 dark:bg-slate-900/95 backdrop-blur shadow-md"
         >
           <Crosshair className="w-3.5 h-3.5" />
-          <span className="sm:hidden">Achar {nomePiloto} 🎯</span>
-          <span className="hidden sm:inline">Achar o {nomePiloto} no mapa 🎯</span>
+          <span className="sm:hidden">Localizar {nomePiloto}</span>
+          <span className="hidden sm:inline">Centralizar em {nomePiloto}</span>
         </Button>
 
         {minhaPosicao ? (
@@ -449,8 +449,8 @@ export default function Mapa({
             />
             <span className="truncate">
               {posicaoAoVivo?.fonte === 'ao-vivo'
-                ? `No radar ao vivo! · ${posicaoAoVivo.provedor || 'adsb.lol'} 📡`
-                : 'No chute da escala (sem sinal ADS-B) 🌊'}
+                ? `Rastreamento ao vivo · ${posicaoAoVivo.provedor || 'adsb.lol'}`
+                : 'Posição estimada pela escala (sem sinal ADS-B)'}
             </span>
           </div>
         )}
@@ -460,7 +460,7 @@ export default function Mapa({
             <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
             <span className="truncate">
               {ligacaoComigo.distanciaKm < 1
-                ? `Você e o ${nomePiloto} estão juntinhos! (< 1 km)`
+                ? 'Distância aproximada: menos de 1 km'
                 : `Você ↔ ${nomePiloto}: ${Math.round(
                     ligacaoComigo.distanciaKm
                   ).toLocaleString('pt-BR')} km`}

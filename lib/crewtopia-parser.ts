@@ -1,4 +1,5 @@
-import { fromZonedTime } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { getAeroporto } from './airports';
 import type { EventoEscala, TipoEvento } from './types';
 import { gerarCandidatosCallsign } from './opensky';
 
@@ -493,8 +494,21 @@ export function parseCrewtopiaRoster(
       const proxPartidaMs = new Date(proxVoo.inicioUtc).getTime();
       const gapHoras = (proxPartidaMs - chegadaMs) / 3_600_000;
 
-      // Pernoite real fora da base: intervalo >= 6 horas entre pouso e próxima decolagem
-      if (gapHoras < 6) continue;
+      const tzDestino = getAeroporto(cidadeChegada)?.tz ?? fuso;
+      const diaLocalChegada = formatInTimeZone(
+        new Date(vooAtual.fimUtc),
+        tzDestino,
+        'yyyy-MM-dd'
+      );
+      const diaLocalProxPartida = formatInTimeZone(
+        new Date(proxVoo.inicioUtc),
+        tzDestino,
+        'yyyy-MM-dd'
+      );
+
+      // Pernoite real fora da base: precisa virar a noite no destino (próximo voo em dia local posterior)
+      // e ter intervalo >= 6 horas entre pouso e próxima decolagem
+      if (diaLocalChegada === diaLocalProxPartida || gapHoras < 6) continue;
 
       // Usa Término da Jornada / Apresentação se disponíveis próximos aos horários dos voos
       const diaChegadaKey = vooAtual.id.slice(0, 10);

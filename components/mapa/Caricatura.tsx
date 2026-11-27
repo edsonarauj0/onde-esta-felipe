@@ -12,12 +12,13 @@ interface CaricaturaProps {
 }
 
 const LABELS: Record<EstadoStatus, string> = {
-  voo: 'Voando alto ✈️',
-  pernoite: 'Dormindo fora 🌙',
-  folga: 'De folga 🌴',
-  sobreaviso: 'De mala pronta 📞',
-  treinamento: 'Piloto de simulador 🎮',
-  'sem-escala': 'Sem escala 🤷',
+  voo: 'Em voo',
+  pernoite: 'Pernoite',
+  'em-solo': 'Em solo',
+  folga: 'De folga',
+  sobreaviso: 'Sobreaviso',
+  treinamento: 'Treinamento',
+  'sem-escala': 'Sem escala',
 };
 
 /**
@@ -87,11 +88,13 @@ export function Caricatura({
                   ? '#1E3A8A'
                   : estado === 'pernoite'
                     ? '#4F46E5'
-                    : estado === 'folga'
-                      ? '#10B981'
-                      : estado === 'sobreaviso'
-                        ? '#F59E0B'
-                        : '#64748B'
+                    : estado === 'em-solo'
+                      ? '#0284C7'
+                      : estado === 'folga'
+                        ? '#10B981'
+                        : estado === 'sobreaviso'
+                          ? '#F59E0B'
+                          : '#64748B'
             }
             strokeWidth="4"
           />
@@ -476,6 +479,20 @@ export function Caricatura({
               <path
                 d="M17 7 A7.5 7.5 0 1 0 21 19.5 A6 6 0 1 1 17 7 Z"
                 fill="#FDE68A"
+              />
+            </g>
+          )}
+
+          {/* Acessório em solo (aguardando próximo voo) */}
+          {estado === 'em-solo' && (
+            <g transform="translate(124, 16)">
+              <circle cx="14" cy="14" r="14" fill="#0284C7" stroke="#FFFFFF" strokeWidth="2.5" />
+              <path
+                d="M8 16 L20 11 L15 19 L14 15.5 Z"
+                fill="#FFFFFF"
+                stroke="#FFFFFF"
+                strokeWidth="1"
+                strokeLinejoin="round"
               />
             </g>
           )}

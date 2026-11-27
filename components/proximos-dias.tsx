@@ -19,6 +19,7 @@ import {
   formatarDataLocal,
   formatarHoraLocal,
   getIntervaloEfetivo,
+  isPernoiteValido,
 } from '@/lib/status';
 import type { EventoEscala } from '@/lib/types';
 
@@ -66,7 +67,7 @@ export function ProximosDias({
   const eventosFuturos = useMemo(() => {
     return eventos
       .filter((ev) => {
-        if (ev.cancelado) return false;
+        if (ev.cancelado || !isPernoiteValido(ev)) return false;
         const { fim } = getIntervaloEfetivo(ev);
         return fim.getTime() >= agoraMs;
       })
@@ -115,8 +116,7 @@ export function ProximosDias({
       <CardContent className="space-y-3">
         {itensPagina.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Nada na agenda! Será que finalmente vai aparecer no almoço de
-            domingo? 🍝
+            Nenhum evento futuro programado na escala.
           </p>
         ) : (
           <div

@@ -161,6 +161,131 @@ describe('getStatus', () => {
     expect(resumo.horasVoo).toBe(20);
     expect(resumo.distanciaTotalKm).toBeGreaterThan(15000);
   });
+
+  it('retorna em-solo (e não pernoite) quando há múltiplos voos no mesmo dia fora da base', () => {
+    const eventosMesmoDia: EventoEscala[] = [
+      {
+        id: '2026-11-27-01-la3266',
+        tipo: 'voo',
+        origem: 'GRU',
+        destino: 'GYN',
+        inicioUtc: '2026-11-27T14:00:00Z', // 11:00 BRT
+        fimUtc: '2026-11-27T15:40:00Z', // 12:40 BRT
+        numeroVoo: 'LA3266',
+      },
+      {
+        id: '2026-11-27-02-la3267',
+        tipo: 'voo',
+        origem: 'GYN',
+        destino: 'GRU',
+        inicioUtc: '2026-11-27T17:05:00Z', // 14:05 BRT
+        fimUtc: '2026-11-27T18:55:00Z', // 15:55 BRT
+        numeroVoo: 'LA3267',
+      },
+      {
+        id: '2026-11-27-03-la3490',
+        tipo: 'voo',
+        origem: 'GRU',
+        destino: 'BPS',
+        inicioUtc: '2026-11-27T19:50:00Z', // 16:50 BRT
+        fimUtc: '2026-11-27T21:45:00Z', // 18:45 BRT
+        numeroVoo: 'LA3490',
+      },
+      {
+        id: '2026-11-28-01-la3491',
+        tipo: 'voo',
+        origem: 'BPS',
+        destino: 'GRU',
+        inicioUtc: '2026-11-28T11:00:00Z', // 08:00 BRT do dia seguinte
+        fimUtc: '2026-11-28T13:00:00Z',
+        numeroVoo: 'LA3491',
+      },
+    ];
+
+    // 13:20 BRT em Goiânia aguardando LA3267 às 14:05 -> em-solo (NÃO pernoite)
+    const emGyn = getStatus(eventosMesmoDia, new Date('2026-11-27T16:20:00Z'));
+    expect(emGyn.estado).toBe('em-solo');
+    expect(emGyn.aeroportoAtual?.iata).toBe('GYN');
+    expect(emGyn.proximoEvento?.numeroVoo).toBe('LA3267');
+
+    // 16:15 BRT em Guarulhos entre GYN->GRU e GRU->BPS -> em-solo no aeroporto GRU (NÃO folga em casa)
+    const emGru = getStatus(eventosMesmoDia, new Date('2026-11-27T19:15:00Z'));
+    expect(emGru.estado).toBe('em-solo');
+    expect(emGru.aeroportoAtual?.iata).toBe('GRU');
+    expect(emGru.proximoEvento?.numeroVoo).toBe('LA3490');
+
+    // 19:30 BRT em Porto Seguro após o último voo do dia (próximo voo só amanhã) -> pernoite
+    const emBps = getStatus(eventosMesmoDia, new Date('2026-11-27T22:30:00Z'));
+    expect(emBps.estado).toBe('pernoite');
+    expect(emBps.aeroportoAtual?.iata).toBe('BPS');
+  });
+
+  it('não classifica conexão curta na virada da meia-noite nem pernoite inferido no mesmo dia como pernoite', () => {
+    const eventosVirada: EventoEscala[] = [
+      {
+        id: 'voo-noturno-1',
+        tipo: 'voo',
+        origem: 'GRU',
+        destino: 'VIX',
+        inicioUtc: '2026-11-02T01:00:00Z', // 01/11 22:00 BRT
+        fimUtc: '2026-11-02T02:15:00Z', // 01/11 23:15 BRT
+        numeroVoo: 'LA3336',
+      },
+      {
+        id: 'voo-noturno-2',
+        tipo: 'voo',
+        origem: 'VIX',
+        destino: 'GRU',
+        inicioUtc: '2026-11-02T04:30:00Z', // 02/11 01:30 BRT (intervalo 2h15)
+        fimUtc: '2026-11-02T06:00:00Z',
+        numeroVoo: 'LA4537',
+      },
+    ];
+
+    // 01/11 23:45 BRT em VIX com voo às 01:30 BRT -> conexão curta, NÃO pernoite
+    const virada = getStatus(eventosVirada, new Date('2026-11-02T02:45:00Z'));
+    expect(virada.estado).toBe('em-solo');
+    expect(virada.aeroportoAtual?.iata).toBe('VIX');
+
+    // Pernoite inferido legado no mesmo dia local deve ser ignorado em getStatus e calcularResumoMes
+    const eventosComPernoiteLegado: EventoEscala[] = [
+      {
+        id: 'voo-manha',
+        tipo: 'voo',
+        origem: 'GRU',
+        destino: 'GYN',
+        inicioUtc: '2026-11-27T09:00:00Z', // 06:00 BRT
+        fimUtc: '2026-11-27T10:30:00Z', // 07:30 BRT
+        numeroVoo: 'LA3260',
+      },
+      {
+        id: '2026-11-27-pernoite-gyn-1',
+        tipo: 'pernoite',
+        origem: 'GYN',
+        destino: 'GYN',
+        inicioUtc: '2026-11-27T11:00:00Z', // 08:00 BRT
+        fimUtc: '2026-11-27T16:35:00Z', // 13:35 BRT (mesmo dia!)
+        inferido: true,
+      },
+      {
+        id: 'voo-tarde',
+        tipo: 'voo',
+        origem: 'GYN',
+        destino: 'GRU',
+        inicioUtc: '2026-11-27T17:05:00Z', // 14:05 BRT
+        fimUtc: '2026-11-27T18:55:00Z',
+        numeroVoo: 'LA3267',
+      },
+    ];
+
+    const duranteIntervalo = getStatus(
+      eventosComPernoiteLegado,
+      new Date('2026-11-27T16:20:00Z') // 13:20 BRT
+    );
+    expect(duranteIntervalo.estado).toBe('em-solo');
+    expect(duranteIntervalo.aeroportoAtual?.iata).toBe('GYN');
+    expect(calcularResumoMes(eventosComPernoiteLegado).totalPernoites).toBe(0);
+  });
 });
 
 describe('estaNaJanelaOpenSky', () => {

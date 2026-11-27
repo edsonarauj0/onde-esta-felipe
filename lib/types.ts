@@ -73,7 +73,7 @@ export type Convite = {
   expiraEm?: string | null;
 };
 
-export type EstadoStatus = TipoEvento | 'sem-escala';
+export type EstadoStatus = TipoEvento | 'em-solo' | 'sem-escala';
 
 export type RotaGeoJSON = {
   completa: GeoJSON.Feature<GeoJSON.LineString>;
